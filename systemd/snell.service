@@ -1,0 +1,17 @@
+[Unit]
+Description=Snell Proxy Service
+After=network.target network-online.target x-ui.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=snell
+Group=snell
+LimitNOFILE=65535
+ExecStartPre=+/usr/local/bin/snell-routing.sh
+ExecStart=/usr/local/bin/snell-server -c /etc/snell/snell-server.conf
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

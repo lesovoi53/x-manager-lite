@@ -1,0 +1,67 @@
+menu_mieru|Mieru|Подключения|4|Пользователи и пароли
+menu_mieru|Mieru|Подключения|5|Имя подключения
+menu_mieru|Mieru|Подключения|7|Ссылка и QR-код
+menu_mieru|Mieru|Настройки|2|Маршрутизация Xray / Direct
+menu_mieru|Mieru|Настройки|3|Обфускация и паттерн
+menu_mieru|Mieru|Настройки|6|Порты
+menu_mieru|Mieru|Настройки|10|Доступ через фаервол
+menu_mieru|Mieru|Обслуживание|1|Статус и сокеты
+menu_mieru|Mieru|Обслуживание|8|Живые логи
+menu_mieru|Mieru|Обслуживание|9|Перезапустить
+menu_mieru|Mieru|Обслуживание|11|Обновить выпуск Lite
+menu_snell|Snell|Подключения|4|Имя подключения
+menu_snell|Snell|Подключения|5|Управление PSK
+menu_snell|Snell|Подключения|7|Ссылка, параметры и QR-код
+menu_snell|Snell|Настройки|2|Маршрутизация Xray / Direct
+menu_snell|Snell|Настройки|3|HTTP-обфускация
+menu_snell|Snell|Настройки|6|Порт
+menu_snell|Snell|Настройки|10|Доступ через фаервол
+menu_snell|Snell|Обслуживание|1|Статус и сокеты
+menu_snell|Snell|Обслуживание|8|Живые логи
+menu_snell|Snell|Обслуживание|9|Перезапустить
+menu_wdtt|WDTT / qwdtt|Подключения|3|Устройства и трафик
+menu_wdtt|WDTT / qwdtt|Подключения|4|Ссылка и QR-код
+menu_wdtt|WDTT / qwdtt|Подключения|5|Имя подключения
+menu_wdtt|WDTT / qwdtt|Настройки|2|Маршрутизация Xray / Direct
+menu_wdtt|WDTT / qwdtt|Настройки|8|Доступ через фаервол
+menu_wdtt|WDTT / qwdtt|Обслуживание|1|Статус и сокеты
+menu_wdtt|WDTT / qwdtt|Обслуживание|6|Живые логи
+menu_wdtt|WDTT / qwdtt|Обслуживание|7|Перезапустить
+menu_csqtt|CSQTT|Подключения|5|Команда SSH-туннеля
+menu_csqtt|CSQTT|Подключения|6|Показать реквизиты
+menu_csqtt|CSQTT|Подключения|9|Сменить логин и пароль
+menu_csqtt|CSQTT|Подключения|10|Имя подключения
+menu_csqtt|CSQTT|Подключения|11|Ссылка и QR-код
+menu_csqtt|CSQTT|Доступ|2|Закрыть веб-панель за SSH-туннелем
+menu_csqtt|CSQTT|Доступ|3|Открыть веб-панель извне
+menu_csqtt|CSQTT|Доступ|4|Доступ к VPN-туннелю
+menu_csqtt|CSQTT|Обслуживание|1|Статус и сокеты
+menu_csqtt|CSQTT|Обслуживание|7|Живые логи
+menu_csqtt|CSQTT|Обслуживание|8|Перезапустить
+menu_ssl|SSL-сертификаты|Сертификаты|1|Найти локальные сертификаты
+menu_ssl|SSL-сертификаты|Сертификаты|3|Проверить срок действия
+menu_ssl|SSL-сертификаты|Панель 3X-UI|2|Синхронизировать сертификат в панель
+menu_ssl|SSL-сертификаты|Панель 3X-UI|4|Памятка для панели
+menu_firewall|Фаервол|Доступ к службам|1|Mieru
+menu_firewall|Фаервол|Доступ к службам|2|Snell
+menu_firewall|Фаервол|Доступ к службам|3|WDTT
+menu_firewall|Фаервол|Доступ к службам|4|CSQTT VPN
+menu_firewall|Фаервол|Доступ к службам|5|CSQTT веб-панель
+menu_firewall|Фаервол|Доступ к службам|6|DNS-туннель
+menu_firewall|Фаервол|Массовые действия|7|Заблокировать все протоколы
+menu_firewall|Фаервол|Массовые действия|8|Открыть штатный доступ ко всем протоколам
+menu_system_opt|Система|Настройки|1|DNS системы
+menu_system_opt|Система|Настройки|2|BBR и сетевые буферы
+menu_system_opt|Система|Настройки|3|Swap
+menu_system_opt|Система|Настройки|4|Fail2ban
+menu_system_opt|Система|Диагностика|5|Характеристики сервера и сети
+menu_subscriptions|Подписки TUNA|Пользователи|1|Список и ссылки подписок
+menu_subscriptions|Подписки TUNA|Пользователи|2|Создать из служб сервера
+menu_subscriptions|Подписки TUNA|Пользователи|3|Создать со своими ссылками
+menu_subscriptions|Подписки TUNA|Пользователи|4|Редактировать / группы URL-test и Speedtest
+menu_subscriptions|Подписки TUNA|Пользователи|7|Включить / отключить подписку
+menu_subscriptions|Подписки TUNA|Обслуживание|10|Перезапустить службу
+menu_subscriptions|Подписки TUNA|Обслуживание|11|Живые логи
+menu_subscriptions|Подписки TUNA|Обслуживание|12|Обновить выпуск Lite
+menu_subscriptions|Подписки TUNA|Опасные действия|5|Удалить пользователя
+menu_subscriptions|Подписки TUNA|Опасные действия|6|Отозвать старую ссылку: ротация токена

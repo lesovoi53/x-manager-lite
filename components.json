@@ -1,0 +1,26 @@
+{
+  "repository": "lesovoi53/x-manager-lite",
+  "release": "v2026.10.13.0",
+  "versions": {
+    "snell": "5.0.1",
+    "mieru": "3.38.0",
+    "masterdns": "v2026.06.13.234407-7de2476",
+    "snell6": "1.14.1-extended-2.7.2"
+  },
+  "sha256": {
+    "snell-amd64.zip": "9bea1c2b9e35b73b31634856c04d18c393072b9e5dcde6a32781d8b8f908c539",
+    "masterdns-amd64.tar.gz": "597bdc510b896a3b4ac89865ee7cefa73191025c64093f5e0f85c76a70430de9",
+    "mita-amd64.deb": "5170555aace38f76862541587b632d61848bba12f2e845b057977c9f9257e59a",
+    "mita-source.tar.gz": "73f0885f63e929a35d7ab8358d21913bc96020a7ffaf830cc0a69772dcd834cf",
+    "snell6-amd64.tar.gz": "e4606cc7e3ee19885b5c16ad4ec8e28c8b3bacbc31949f93018cd5c77883b28b",
+    "snell6-source.tar.gz": "88bd9e63ab258f6ab07945f0b7619103ab46c2effc154cef15611adf22b67a95"
+  },
+  "platform": {
+    "os": [
+      "debian12",
+      "debian13"
+    ],
+    "architecture": "amd64"
+  },
+  "edition": "lite"
+}
