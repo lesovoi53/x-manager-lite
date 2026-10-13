@@ -135,6 +135,9 @@ LIFECYCLE_UNITS = ['wdtt','csqtt','masterdns','sing-box','caddy','xray','vpn-wat
 SERVICES += [u+'.service' for u in LIFECYCLE_UNITS if u+'.service' not in SERVICES]
 SERVICES += ['vpn-watchdog.timer']
 PATHS += ['/run/x-manager/service-control']
+# Only these UFW files contain our marked rules. Restore them alongside the
+# existing kernel firewall snapshot so rollback remains correct after a reboot.
+PATHS += ['/etc/ufw/before.rules', '/etc/ufw/before6.rules']
 PATHS += ['/var/lib/x-manager/network-profile',
           '/etc/sysctl.d/90-tuna-network.conf']
 PATHS += ['/var/lib/x-manager/tcp-profile', '/etc/sysctl.d/91-tuna-tcp.conf', '/etc/modules-load.d/90-tuna-network.conf',

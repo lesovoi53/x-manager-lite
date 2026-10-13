@@ -8,12 +8,8 @@ xm_check_external_watchdog() {
 
 xm_preflight() {
     [ "$EUID" -eq 0 ] || xm_die 'Run as root.'
-    . /etc/os-release
-    case "$ID:$VERSION_ID" in
-        debian:12|debian:13) ;;
-        *) xm_die "Unsupported OS: $ID $VERSION_ID";;
-    esac
-    case "$(uname -m)" in x86_64) ;; *) xm_die 'Unsupported architecture';; esac
+    command -v python3 >/dev/null || xm_die 'Missing prerequisite: python3'
+    python3 "$SCRIPT_DIR/scripts/supported-platform.py" || xm_die 'Unsupported platform; no changes made.'
     for cmd in apt-get systemctl flock tar; do command -v "$cmd" >/dev/null || xm_die "Missing prerequisite: $cmd"; done
     [ -d /run/systemd/system ] || xm_die 'A running systemd is required.'
     exec 9>/run/lock/x-manager-install.lock

@@ -12,13 +12,14 @@ if [ ! -f "$SCRIPT_DIR/scripts/installer-common.sh" ]; then
     command -v curl >/dev/null || { echo 'curl is required to download the distribution' >&2; exit 1; }
     bundle=$(mktemp -d)
     trap 'rm -rf -- "$bundle"' EXIT
-    curl -fL --retry 2 "https://github.com/lesovoi53/x-manager-lite/archive/refs/tags/v2026.10.13.0.tar.gz" -o "$bundle/source.tar.gz"
+    curl -fL --retry 2 "https://github.com/lesovoi53/x-manager-lite/archive/refs/tags/v2026.10.13.1.tar.gz" -o "$bundle/source.tar.gz"
     mkdir "$bundle/source"
     tar -xzf "$bundle/source.tar.gz" --strip-components=1 -C "$bundle/source"
     bash "$bundle/source/install.sh" "$@"
     exit $?
 fi
 . "$SCRIPT_DIR/scripts/installer-common.sh"
+. "$SCRIPT_DIR/scripts/firewall-common.sh"
 xm_preflight
 python3 "$SCRIPT_DIR/scripts/lite-edition.py" check
 if [ "${1:-}" = --backup ]; then
@@ -533,6 +534,11 @@ if [ "$UPDATE_MASTERDNS" = yes ]; then
     install -m 0755 "$WORK_DIR/masterdns-server" /usr/local/bin/masterdns-server.new
     mv -f /usr/local/bin/masterdns-server.new /usr/local/bin/masterdns-server
     xm_service masterdns
+    # Persist an existing legacy MasterDNS opening when adopting active UFW.
+    masterdns_port=$(python3 -c 'import tomllib; p=tomllib.load(open("/etc/masterdns/server_config.toml","rb"))["UDP_PORT"]; assert type(p) is int and 1<=p<=65535; print(p)')
+    if command iptables -C INPUT -p udp --dport "$masterdns_port" -j ACCEPT 2>/dev/null; then
+        iptables -C INPUT -p udp --dport "$masterdns_port" -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport "$masterdns_port" -j ACCEPT
+    fi
 fi
 
 # Интеграция qwdtt с использованием подхваченного TPROXY порта
@@ -596,10 +602,11 @@ install -d -m 0755 /usr/local/share/x-manager /usr/local/share/x-manager/patches
 install -m 0644 "$SCRIPT_DIR/scripts/"{snell-routing.py,snell-subscriptions.py,mieru-subscriptions.py,xray_gateways.py,tuna-watchdog.py,plan-ports.py,release-assets.py,update-release.sh,xray-discovery.py,menu-v2.sh} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/components.json" /usr/local/share/x-manager/components.json
 install -m 0644 "$SCRIPT_DIR/scripts/menu-actions.tsv" /usr/local/share/x-manager/scripts/
-install -m 0644 "$SCRIPT_DIR/scripts/"{lite-edition.py,tcp-profile.py,menu-lite.sh} /usr/local/share/x-manager/scripts/
+install -m 0644 "$SCRIPT_DIR/scripts/"{lite-edition.py,tcp-profile.py,menu-lite.sh,supported-platform.py} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/installer-state.py" /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/"{service-control.py,network-diagnostics.py,network-profile.py,watchdog-health.py,snell6-endpoints.py,snell-switch.py} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/reboot-schedule.py" /usr/local/share/x-manager/scripts/
+install -m 0644 "$SCRIPT_DIR/scripts/"{firewall-adapter.py,firewall-common.sh} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/tuna-recovery.py" /usr/local/share/x-manager/scripts/
 # Capture prior timer existence: upgrades preserve an existing disabled timer.
 health_bootstrap_args=()

@@ -104,6 +104,8 @@ class ExternalListenerPorts(unittest.TestCase):
             root = Path(temporary)
             (root/'scripts').mkdir()
             shutil.copyfile(ROOT/'install.sh', root/'install.sh')
+            for helper in ('firewall-common.sh', 'firewall-adapter.py'):
+                shutil.copyfile(ROOT/'scripts'/helper, root/'scripts'/helper)
             (root/'scripts/lite-edition.py').write_text('# Fixture isolates installed edition; edition guard tested separately.\n')
             shutil.copyfile(ROOT/'scripts/external-listener-ports.py', root/'scripts/external-listener-ports.py')
             # Only OS/dependency endpoints are substituted; run the real installer

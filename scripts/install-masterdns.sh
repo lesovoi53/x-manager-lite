@@ -3,6 +3,7 @@
 set -eEuo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 . "$SCRIPT_DIR/scripts/installer-common.sh"
+. "$SCRIPT_DIR/scripts/firewall-common.sh"
 xm_preflight
 python3 "$SCRIPT_DIR/scripts/lite-edition.py" check
 [ "$#" = 1 ] || xm_die 'Укажите домен DNS-зоны'

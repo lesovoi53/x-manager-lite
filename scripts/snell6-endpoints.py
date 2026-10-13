@@ -358,9 +358,14 @@ class Manager:
         return ["-p", "tcp", "--dport", str(value["port"]), "-m", "comment", "--comment",
                 "XM_SNELL6_" + value["endpoint_id"], "-j", "ACCEPT"]
 
+    def firewall_command(self, *args):
+        if load_helper('firewall-adapter').active(self.root):
+            return self.run('python3', str(Path(__file__).with_name('firewall-adapter.py')), *args)
+        return self.run('iptables', *args)
+
     def firewall_exists(self, value):
         try:
-            self.run("iptables", "-w", "-C", "INPUT", *self.firewall_rule(value))
+            self.firewall_command("-w", "-C", "INPUT", *self.firewall_rule(value))
             return True
         except Error as error:
             if getattr(error, "returncode", None) != 1:
@@ -370,7 +375,7 @@ class Manager:
     def firewall(self, value, present):
         exists = self.firewall_exists(value)
         if exists != present:
-            self.run("iptables", "-w", "-I" if present else "-D", "INPUT", *self.firewall_rule(value))
+            self.firewall_command("-w", "-I" if present else "-D", "INPUT", *self.firewall_rule(value))
 
     def ensure_firewall(self, slot):
         # Called synchronously by ExecStartPre while the installer may hold its
@@ -882,11 +887,10 @@ def main():
     if os.geteuid() != 0:
         raise Error("Run as root")
     if args.action not in ("uri", "status"):
-        os_release = Path("/etc/os-release").read_text()
-        if (not re.search(r'(?m)^ID=debian$', os_release)
-                or not re.search(r'(?m)^VERSION_ID="?(12|13)"?$', os_release)
-                or platform.machine() not in ("x86_64", "amd64")):
-            raise Error("Snell6 requires Debian 12/13 amd64")
+        try:
+            load_helper('supported-platform').check()
+        except (OSError, ValueError) as error:
+            raise Error(str(error)) from error
     os.umask(0o077)
     manager = Manager()
     if args.action == "menu":

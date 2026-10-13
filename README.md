@@ -1,6 +1,6 @@
 # X-Manager Lite
 
-Русское терминальное меню для сетевых служб на **Debian 12/13 amd64 с systemd**.
+Русское терминальное меню для сетевых служб на **Debian 12/13 и Ubuntu 24.04/26.04 LTS, amd64 с systemd**.
 Самостоятельная редакция X-Manager: Snell v5/v6, Mieru, MasterDnsVPN,
 локальные подписки TUNA, watchdog и настройки сервера.
 

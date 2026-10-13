@@ -1,6 +1,6 @@
 {
   "repository": "lesovoi53/x-manager-lite",
-  "release": "v2026.10.13.0",
+  "release": "v2026.10.13.1",
   "versions": {
     "snell": "5.0.1",
     "mieru": "3.38.0",
@@ -18,7 +18,9 @@
   "platform": {
     "os": [
       "debian12",
-      "debian13"
+      "debian13",
+      "ubuntu24.04",
+      "ubuntu26.04"
     ],
     "architecture": "amd64"
   },

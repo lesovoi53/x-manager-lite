@@ -261,6 +261,20 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(self.tool.plan(adaptive=True)['preflight_ready'])
         self.assertEqual(self.calls, [])
 
+    def test_ubuntu_packaged_qdisc_default_preserves_admin_edits(self):
+        import hashlib
+        self.adaptive_fixture()
+        name = '/etc/sysctl.d/10-bufferbloat.conf'
+        text = '-net.core.default_qdisc = fq_codel\n'
+        self.write(name, text)
+        self.assertFalse(self.tool.plan(adaptive=True)['preflight_ready'])
+        self.write('/var/lib/dpkg/status', 'Package: procps\nConffiles:\n ' + name +
+                   ' ' + hashlib.md5(text.encode()).hexdigest() + '\n')
+        self.assertTrue(self.tool.plan(adaptive=True)['preflight_ready'])
+        self.write(name, text + '# administrator changed this file\n')
+        self.assertFalse(self.tool.plan(adaptive=True)['preflight_ready'])
+        self.assertEqual(self.calls, [])
+
     def test_adaptive_keeps_wildcard_conflicts_conservative(self):
         self.adaptive_fixture()
         self.write('/etc/sysctl.d/99-a.conf', 'net.core.*mem_max=99999999\n')

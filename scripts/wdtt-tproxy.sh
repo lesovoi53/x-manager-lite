@@ -5,6 +5,9 @@
 # ==============================================================================
 
 set -e
+if [ -f /usr/local/share/x-manager/scripts/firewall-common.sh ]; then
+    . /usr/local/share/x-manager/scripts/firewall-common.sh
+fi
 iptables-save >/dev/null
 
 WAN_IF=$(ip route show default 2>/dev/null | awk '{print $5}' | head -n 1)

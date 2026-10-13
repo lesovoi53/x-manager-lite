@@ -9,6 +9,12 @@
 
 clear() { command clear 2>/dev/null || true; }
 
+if [ -f /usr/local/share/x-manager/scripts/firewall-common.sh ]; then
+    . /usr/local/share/x-manager/scripts/firewall-common.sh
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/../scripts/firewall-common.sh" ]; then
+    . "$(dirname "${BASH_SOURCE[0]}")/../scripts/firewall-common.sh"
+fi
+
 # Цвета терминала
 RED='\033[0;31m'
 GREEN='\033[0;32m'

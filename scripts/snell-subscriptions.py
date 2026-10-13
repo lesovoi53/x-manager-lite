@@ -10,6 +10,7 @@ import configparser
 from contextlib import closing
 import datetime
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -232,10 +233,19 @@ def edit_config(data, changes):
 
 
 def run(*args, **kwargs):
+    if args[0] == 'iptables' and firewall_helper().active():
+        args = ('python3', str(Path(__file__).with_name('firewall-adapter.py')), *args[1:])
     p = subprocess.run(args, capture_output=True, **kwargs)
     if p.returncode:
         raise Error('Command failed: ' + args[0] + ' ' + args[1])
     return p.stdout
+
+
+def firewall_helper():
+    spec = importlib.util.spec_from_file_location('firewall_adapter', Path(__file__).with_name('firewall-adapter.py'))
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    return helper
 
 
 def restart():
@@ -323,6 +333,16 @@ def transaction(config, tag, db_path, host, backup_root, change=None, bind_user=
     if tag_bytes is not None:
         (backup / 'tag.txt').write_bytes(tag_bytes)
     firewall = run('iptables-save') if port_changed else None
+    ufw_files = {}
+    firewall6 = None
+    if port_changed and firewall_helper().active():
+        for name in ('before.rules', 'before6.rules'):
+            path = Path('/etc/ufw')/name
+            if path.exists():
+                ufw_files[path] = path.read_bytes()
+                (backup/name).write_bytes(ufw_files[path])
+        firewall6 = run('ip6tables-save')
+        (backup/'ip6tables.rules').write_bytes(firewall6)
     if firewall is not None:
         (backup / 'iptables.rules').write_bytes(firewall)
     db = None
@@ -366,7 +386,11 @@ def transaction(config, tag, db_path, host, backup_root, change=None, bind_user=
                 else:
                     atomic_write(tag, tag_bytes)
                 if firewall is not None:
+                    for path, contents in ufw_files.items():
+                        atomic_write(path, contents)
                     run('iptables-restore', input=firewall)
+                    if firewall6 is not None:
+                        run('ip6tables-restore', input=firewall6)
                 if needs_restart:
                     restart_service()
         except Exception:

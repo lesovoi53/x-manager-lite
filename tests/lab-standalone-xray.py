@@ -12,7 +12,7 @@ import threading
 import time
 
 assert Path('/.x-manager-test-lab').is_file(), 'Disposable lab only'
-ROOT = Path('/work/x-manager')
+ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('discovery', ROOT/'scripts/xray-discovery.py')
 discovery = importlib.util.module_from_spec(spec); spec.loader.exec_module(discovery)
 

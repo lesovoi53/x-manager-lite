@@ -9,7 +9,7 @@ Lite получен из X-Manager `d97a3c50f51f729838376801d4e8fb9bb5edbea4`.
 
 | Требование | Основная реализация |
 |---|---|
-| Debian 12/13 amd64, root/systemd, блокировка установки | `scripts/installer-common.sh:xm_preflight` |
+| Debian 12/13 и Ubuntu 24.04/26.04 amd64, root/systemd, блокировка установки | `scripts/supported-platform.py`, `scripts/installer-common.sh:xm_preflight` |
 | Full и Lite не заменяют друг друга неявно | `scripts/lite-edition.py`, проверка манифеста в updater |
 | Фиксированные компоненты собственного Release | `components.json`, `scripts/release-assets.py` |
 | Резервирование, SQLite WAL, firewall, runtime sysctl, rollback | `scripts/installer-state.py`, `xm_begin/xm_exit/xm_finish` |
@@ -22,6 +22,23 @@ Lite получен из X-Manager `d97a3c50f51f729838376801d4e8fb9bb5edbea4`.
 | Локальные health-пробы | `watchdog-health.py`, `tuna-healthcheck.timer` |
 | Адаптивная сеть / отдельные TCP-настройки | `network-profile.py`, `tcp-profile.py` |
 | Запланированная перезагрузка | `reboot-schedule.py` |
+| Общая матрица ОС установщика и Snell v6 | `supported-platform.py`; helper обязательно копируется установщиком |
+| Постоянные INPUT-правила при активном UFW | `firewall-adapter.py`, `firewall-common.sh`; маркированные блоки before.rules/before6.rules |
+
+UFW-адаптер не подменяет системный бинарник iptables: его вызывают только
+операции Lite. При выключенном UFW команды передаются iptables без изменения.
+При включённом — меняются только собственные INPUT-правила; остальные таблицы
+маршрутизации остаются в прежнем коде. Список `-S INPUT` адаптера содержит только
+собственные правила, чтобы позиционная замена порта Snell не меняла чужое правило.
+Операции адаптера сериализованы flock; изменение одной команды атомарно с откатом
+файлов и обеих семейств firewall. Старые многошаговые действия меню не являются
+одной общей транзакцией: при ошибке действие прерывается с сообщением.
+Для установщика и смены порта Snell предусмотрена внешняя транзакция/резервная копия.
+
+Проверка UFW настоящими пакетами: `python3 tests/ufw_vm.py` только в изолированной
+VM с маркером `/.x-manager-test-lab` и заранее включённым UFW. Тест создаёт свой
+network namespace/veth, проверяет открытие/закрытие/reload и сохраняет user.rules.
+Не запускать лабораторные сценарии на рабочем сервере.
 
 Все эти пути относительны корню репозитория. Установленная полная копия находится
 в `/usr/local/share/x-manager/distribution`; её надо обновлять вместе с меню и

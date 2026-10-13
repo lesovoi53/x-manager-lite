@@ -7,6 +7,7 @@ requires the explicit prepare command. No interface restart, reboot or route edi
 import argparse
 from contextlib import contextmanager
 import fnmatch
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -151,6 +152,23 @@ class Profile:
                 Path(record['file']).parent == Path('/etc/sysctl.d') and
                 (Path(record['file']).name, record['line']) < latest[record['key']])
         return records
+
+    def packaged_ubuntu_qdisc(self, declaration):
+        # Ubuntu ships this early default in /etc, not /usr/lib. Only exempt
+        # the unmodified procps conffile; administrator edits remain blockers.
+        name = '/etc/sysctl.d/10-bufferbloat.conf'
+        if (declaration['file'] != name or declaration['key'] != 'net.core.default_qdisc'
+                or not declaration['explicit'] or declaration['potential_later_override']):
+            return False
+        status = self.path('/var/lib/dpkg/status')
+        if not status.exists() or status.stat().st_size > 8 * 1024 * 1024:
+            return False
+        for package in status.read_text().split('\n\n'):
+            if not re.search(r'^Package: procps$', package, re.M):
+                continue
+            match = re.search(r'^ ' + re.escape(name) + r' ([a-f0-9]{32})$', package, re.M)
+            return bool(match and hashlib.md5(self.path(name).read_bytes()).hexdigest() == match[1])
+        return False
 
     def plan(self, adaptive=False):
         if adaptive:
@@ -394,7 +412,8 @@ class Profile:
         for declaration in declarations:
             if declaration['superseded'] or declaration["key"] not in desired:
                 continue
-            admin = declaration["file"].startswith(("/etc/", "/run/"))
+            admin = (declaration["file"].startswith(("/etc/", "/run/"))
+                     and not self.packaged_ubuntu_qdisc(declaration))
             if (declaration["potential_later_override"] or admin) and declaration["value"] != desired[declaration["key"]]:
                 blockers.append("Potential later override: %s:%d (%s)" % (
                     declaration["file"], declaration["line"], declaration["key"]))
