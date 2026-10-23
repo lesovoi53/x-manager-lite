@@ -12,7 +12,7 @@ if [ ! -f "$SCRIPT_DIR/scripts/installer-common.sh" ]; then
     command -v curl >/dev/null || { echo 'curl is required to download the distribution' >&2; exit 1; }
     bundle=$(mktemp -d)
     trap 'rm -rf -- "$bundle"' EXIT
-    curl -fL --retry 2 "https://github.com/lesovoi53/x-manager-lite/archive/refs/tags/v2026.10.23.1.tar.gz" -o "$bundle/source.tar.gz"
+    curl -fL --retry 2 "https://github.com/lesovoi53/x-manager-lite/archive/refs/tags/v2026.10.23.2.tar.gz" -o "$bundle/source.tar.gz"
     mkdir "$bundle/source"
     tar -xzf "$bundle/source.tar.gz" --strip-components=1 -C "$bundle/source"
     bash "$bundle/source/install.sh" "$@"
@@ -309,11 +309,25 @@ else
     . "$ENV_FILE"
 fi
 
+# Open ports for a new component, or persist an existing legacy opening in UFW.
+# Updates must not recreate ACCEPT rules removed by the administrator.
+xm_open_component_port() {
+    local new_config="$1" protocol="$2" port="$3" rc=0
+    if [ "$new_config" != yes ]; then
+        command iptables -C INPUT -p "$protocol" --dport "$port" -j ACCEPT 2>/dev/null || rc=$?
+        [ "$rc" -le 1 ] || xm_die 'Cannot inspect existing component firewall policy'
+        [ "$rc" = 0 ] || return 0
+    fi
+    iptables -C INPUT -p "$protocol" --dport "$port" -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p "$protocol" --dport "$port" -j ACCEPT
+}
+
 # Установка Snell v5.0.1
 if [ "$INSTALL_SNELL" = "yes" ]; then
     echo -e "${CYAN}==> Шаг 3: Установка и настройка Snell v5.0.1 (Hybrid TCP + UDP/QUIC)...${NC}"
     id -u snell &>/dev/null || useradd -r -s /usr/sbin/nologin snell
-    mkdir -p /etc/snell /usr/local/bin
+    # New configuration directories must remain traversable under umask 077.
+    [ -d /etc/snell ] || install -d -m 0755 /etc/snell
+    mkdir -p /usr/local/bin
 
     tmp_snell="$WORK_DIR/snell.zip"
     cp "$WORK_DIR/snell-package.zip" "$tmp_snell"
@@ -324,6 +338,7 @@ if [ "$INSTALL_SNELL" = "yes" ]; then
     mv -f /usr/local/bin/snell-server.new /usr/local/bin/snell-server
 
     # Конфигурация Snell
+    SNELL_NEW_CONFIG=no
     if [ ! -f "/etc/snell/snell-server.conf" ]; then
         cat << EOF > /etc/snell/snell-server.conf
 [snell-server]
@@ -332,12 +347,14 @@ ipv6 = false
 psk = ${SNELL_PSK}
 obfs = ${SNELL_OBFS}
 EOF
+        SNELL_NEW_CONFIG=yes
+        chown snell:snell /etc/snell/snell-server.conf
+        chmod 640 /etc/snell/snell-server.conf
     fi
 
     [ -f /etc/snell/tag.txt ] || echo "Snell-v5" > /etc/snell/tag.txt
     [ -f /etc/snell/routing.mode ] || echo "$DEFAULT_ROUTING" > /etc/snell/routing.mode
-    chown -R snell:snell /etc/snell
-    chmod 640 /etc/snell/snell-server.conf
+    # Keep existing ownership, including root-owned private routing state.
     SNELL_PORT=$(sed -nE 's/^listen[[:space:]]*=[[:space:]]*.*:([0-9]+)$/\1/p' /etc/snell/snell-server.conf)
     [[ "$SNELL_PORT" =~ ^[0-9]+$ ]] || xm_die "Invalid Snell listen port"
 
@@ -371,8 +388,8 @@ WantedBy=multi-user.target
 EOF
 
     # Открытие TCP и UDP в iptables для Snell
-    iptables -C INPUT -p tcp --dport "$SNELL_PORT" -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport "$SNELL_PORT" -j ACCEPT
-    iptables -C INPUT -p udp --dport "$SNELL_PORT" -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p udp --dport "$SNELL_PORT" -j ACCEPT
+    xm_open_component_port "$SNELL_NEW_CONFIG" tcp "$SNELL_PORT"
+    xm_open_component_port "$SNELL_NEW_CONFIG" udp "$SNELL_PORT"
 
     systemctl daemon-reload
     xm_enable snell
@@ -384,7 +401,9 @@ fi
 if [ "$INSTALL_MIERU" = "yes" ]; then
     echo -e "${CYAN}==> Шаг 4: Установка и настройка Mieru (mita) с Anti-TSPU пресетом...${NC}"
     id -u mita &>/dev/null || useradd -r -s /usr/sbin/nologin mita
-    mkdir -p /etc/mita /usr/local/bin
+    # New configuration directories must remain traversable under umask 077.
+    [ -d /etc/mita ] || install -d -m 0755 /etc/mita
+    mkdir -p /usr/local/bin
     if [ ! -e /etc/mieru ] && [ ! -L /etc/mieru ]; then ln -s /etc/mita /etc/mieru; fi
 
     dpkg-deb -x "$WORK_DIR/mita.deb" "$WORK_DIR/mita"
@@ -395,6 +414,7 @@ if [ "$INSTALL_MIERU" = "yes" ]; then
     echo -e "  -> Формирование конфигурации Anti-TSPU (Low-Entropy, Nonce, Padding)..."
 
     # Конфигурация Mieru с использованием подхваченного SOCKS5 порта
+    MIERU_NEW_CONFIG=no
     action="PROXY"
     [ "$DEFAULT_ROUTING" = "direct" ] && action="DIRECT"
 
@@ -467,16 +487,19 @@ if [ "$INSTALL_MIERU" = "yes" ]; then
   }
 }
 EOF
+        MIERU_NEW_CONFIG=yes
+        chown mita:mita /etc/mita/config.json
+        chmod 640 /etc/mita/config.json
     fi
 
     if [ ! -f "/etc/mita/users_db.json" ]; then
         jq -e 'reduce .users[] as $u ({}; .[$u.name] = $u.password)' /etc/mita/config.json > /etc/mita/users_db.json
+        chown mita:mita /etc/mita/users_db.json
+        chmod 640 /etc/mita/users_db.json
     fi
     [ -f /etc/mita/server_ip.txt ] || echo "$SERVER_IP" > /etc/mita/server_ip.txt
     [ -f /etc/mita/tag.txt ] || echo "Mieru-Home" > /etc/mita/tag.txt
 
-    chown -R mita:mita /etc/mita
-    chmod 640 /etc/mita/config.json /etc/mita/users_db.json
     jq -e . /etc/mita/config.json >/dev/null
     jq -e . /etc/mita/users_db.json >/dev/null
 
@@ -518,9 +541,9 @@ EOF
     if [[ "$MIERU_PORTS" =~ - ]]; then
         p_s=$(echo "$MIERU_PORTS" | cut -d'-' -f1)
         p_e=$(echo "$MIERU_PORTS" | cut -d'-' -f2)
-        iptables -C INPUT -p "$ipt_proto" --dport "${p_s}:${p_e}" -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p "$ipt_proto" --dport "${p_s}:${p_e}" -j ACCEPT
+        xm_open_component_port "$MIERU_NEW_CONFIG" "$ipt_proto" "${p_s}:${p_e}"
     else
-        iptables -C INPUT -p "$ipt_proto" --dport "$MIERU_PORTS" -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p "$ipt_proto" --dport "$MIERU_PORTS" -j ACCEPT
+        xm_open_component_port "$MIERU_NEW_CONFIG" "$ipt_proto" "$MIERU_PORTS"
     fi
 
     echo -e "  -> Запуск и проверка службы mita..."
