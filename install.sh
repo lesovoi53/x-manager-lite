@@ -12,7 +12,7 @@ if [ ! -f "$SCRIPT_DIR/scripts/installer-common.sh" ]; then
     command -v curl >/dev/null || { echo 'curl is required to download the distribution' >&2; exit 1; }
     bundle=$(mktemp -d)
     trap 'rm -rf -- "$bundle"' EXIT
-    curl -fL --retry 2 "https://github.com/lesovoi53/x-manager-lite/archive/refs/tags/v2026.10.13.1.tar.gz" -o "$bundle/source.tar.gz"
+    curl -fL --retry 2 "https://github.com/lesovoi53/x-manager-lite/archive/refs/tags/v2026.10.23.1.tar.gz" -o "$bundle/source.tar.gz"
     mkdir "$bundle/source"
     tar -xzf "$bundle/source.tar.gz" --strip-components=1 -C "$bundle/source"
     bash "$bundle/source/install.sh" "$@"
@@ -605,6 +605,7 @@ install -m 0644 "$SCRIPT_DIR/scripts/menu-actions.tsv" /usr/local/share/x-manage
 install -m 0644 "$SCRIPT_DIR/scripts/"{lite-edition.py,tcp-profile.py,menu-lite.sh,supported-platform.py} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/installer-state.py" /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/"{service-control.py,network-diagnostics.py,network-profile.py,watchdog-health.py,snell6-endpoints.py,snell-switch.py} /usr/local/share/x-manager/scripts/
+install -m 0644 "$SCRIPT_DIR/scripts/"{masterdns-domains.py,masterdns-link-profiles.py} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/reboot-schedule.py" /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/"{firewall-adapter.py,firewall-common.sh} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/tuna-recovery.py" /usr/local/share/x-manager/scripts/

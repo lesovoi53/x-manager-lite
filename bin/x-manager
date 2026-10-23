@@ -2556,29 +2556,63 @@ detect_base_domain() {
     echo "$d"
 }
 
+xm_masterdns_domains_helper() {
+    local helper=/usr/local/share/x-manager/scripts/masterdns-domains.py
+    [ -f "$helper" ] || helper="$(dirname "${BASH_SOURCE[0]}")/../scripts/masterdns-domains.py"
+    printf '%s\n' "$helper"
+}
+
+xm_masterdns_link_profiles_helper() {
+    local helper=/usr/local/share/x-manager/scripts/masterdns-link-profiles.py
+    [ -f "$helper" ] || helper="$(dirname "${BASH_SOURCE[0]}")/../scripts/masterdns-link-profiles.py"
+    printf '%s\n' "$helper"
+}
+
+get_dns_profile_summary() {
+    python3 - "$(xm_masterdns_link_profiles_helper)" "$MASTERDNS_CONFIG_FILE" "$1" <<'PY'
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('link_profiles_summary', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+p = module.effective(Path(sys.argv[2]), int(sys.argv[3]))
+print(f"Балансировка {p['resolver_balancing_strategy']}; сжатие {p['upload_compression_type']}/{p['download_compression_type']}; потоки {p['rx_tx_workers']}/{p['tunnel_process_workers']}; дублирование {p['packet_duplication_count']}/{p['setup_packet_duplication_count']}; MTU {p['min_upload_mtu']}–{p['max_upload_mtu']}/{p['min_download_mtu']}–{p['max_download_mtu']}")
+PY
+}
+
+menu_dns_link_profiles() {
+    local choice
+    while true; do
+        printf '\nПараметры новых экспортируемых ссылок\n  [1] Жесткая цензура\n  [2] Стандартный\n  [3] Скоростной\n  [0] Назад\n'
+        read -r -p 'Профиль для настройки: ' choice || return
+        case "$choice" in
+            1|2|3) python3 "$(xm_masterdns_link_profiles_helper)" --config "$MASTERDNS_CONFIG_FILE" menu "$choice";;
+            0) return;;
+            *) echo 'Выберите номер из списка.';;
+        esac
+    done
+}
+
+get_dns_domains() {
+    python3 "$(xm_masterdns_domains_helper)" list --config "$MASTERDNS_CONFIG_FILE"
+}
+
 get_dns_domain() {
-    local conf="$MASTERDNS_CONFIG_FILE"
-    local dom=""
-    if [ -f "$conf" ]; then
-        dom=$(grep -oP 'DOMAIN\s*=\s*\["\K[^"]+' "$conf" 2>/dev/null | head -n 1 || true)
-    fi
-    if [ -z "$dom" ]; then
-        local base_d=$(detect_base_domain)
-        if [ -n "$base_d" ]; then
-            dom="d.${base_d}"
-        else
-            dom="d.lesovoi.pro"
-        fi
-    fi
-    echo "$dom"
+    local domains
+    domains=$(get_dns_domains) || return 1
+    printf '%s\n' "${domains%%$'\n'*}"
 }
 
 get_dns_key() {
-    local kf="$MASTERDNS_KEY_FILE"
-    local k=""
-    [ -f "$kf" ] && k=$(cat "$kf" 2>/dev/null | tr -d '[:space:]' || true)
-    [ -z "$k" ] && k="a7125b5f3cc23e525123c677bc6d202e"
-    echo "$k"
+    python3 "$(xm_masterdns_domains_helper)" key --config "$MASTERDNS_CONFIG_FILE"
+}
+
+get_dns_encryption_name() {
+    python3 "$(xm_masterdns_domains_helper)" method-name --config "$MASTERDNS_CONFIG_FILE"
+}
+
+dns_change_encryption() {
+    python3 "$(xm_masterdns_domains_helper)" method-menu --config "$MASTERDNS_CONFIG_FILE"
 }
 
 get_dns_profile_name() {
@@ -2649,89 +2683,70 @@ get_stormdns_link() {
     local p_domain="$2"
     local p_key="$3"
     local p_name="$4"
+    local p_format="${5:-storm}"
     [ -z "$p_domain" ] && p_domain=$(get_dns_domain)
-    [ -z "$p_key" ] && p_key=$(get_dns_key)
+    if [ -z "$p_key" ]; then p_key=$(get_dns_key) || return 1; fi
     [ -z "$p_name" ] && p_name=$(get_dns_profile_name)
-    python3 - << PYEOF
-import json, base64
-
-domain = "${p_domain}"
-key = "${p_key}"
-name = "${p_name}"
-ptype = int("${p_type}")
-
-resolvers = "1.1.1.1\n1.0.0.1\n8.8.8.8\n8.8.4.4\n9.9.9.9\n77.88.8.8\n77.88.8.1\n77.88.8.2\n77.88.8.3\n77.88.8.7\n77.88.8.88"
+    XM_DNS_DOMAIN="$p_domain" XM_DNS_KEY="$p_key" XM_DNS_NAME="$p_name" XM_DNS_TYPE="$p_type" XM_DNS_FORMAT="$p_format" \
+    python3 - "$MASTERDNS_CONFIG_FILE" "$(xm_masterdns_domains_helper)" "$(xm_masterdns_link_profiles_helper)" <<'PYEOF'
+import json, base64, os, sys, importlib.util, zlib
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('masterdns_domains', sys.argv[2])
+helper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(helper)
+settings_spec = importlib.util.spec_from_file_location('masterdns_link_profiles', sys.argv[3])
+link_profiles = importlib.util.module_from_spec(settings_spec)
+settings_spec.loader.exec_module(link_profiles)
+config = Path(sys.argv[1])
+config_text = helper.snapshot(config).decode('utf-8')
+domains = helper.read_domains(config_text)
+export_format = os.environ.get('XM_DNS_FORMAT', 'storm')
+if export_format not in ('storm', 'tuna'):
+    sys.exit('Неизвестный формат экспорта MasterDNS')
+if export_format == 'storm':
+    selected = os.environ.get('XM_DNS_DOMAIN') or domains[0]
+    if selected not in domains:
+        sys.exit('Выбранный домен отсутствует в конфигурации MasterDNS')
+    domains = [selected]
+domain = domains[0]
+key = os.environ['XM_DNS_KEY']
+name = os.environ['XM_DNS_NAME']
+ptype = int(os.environ['XM_DNS_TYPE'])
 
 p = {
     "schema": "whitedns.profile",
     "version": 1,
     "profile": {
         "name": name,
+        "domains": domains,
         "server": {
             "domain": domain,
             "encryption_key": key,
-            "encryption_method": 5
-        },
-        "resolvers": resolvers,
-        "resolver_balancing_strategy": 2,
-        "upload_compression_type": 0,
-        "download_compression_type": 0,
-        "rx_tx_workers": 4,
-        "tunnel_process_workers": 0,
-        "max_packets_per_batch": 8,
-        "arq_window_size": 600,
-        "arq_max_rto_seconds": 5
+            "encryption_method": helper.read_method(config_text)
+        }
     }
 }
+p["profile"].update(link_profiles.effective(config, ptype))
 
-if ptype == 1:
-    p["profile"].update({
-        "packet_duplication_count": 4,
-        "setup_packet_duplication_count": 4,
-        "base_encode_data": True,
-        "min_upload_mtu": 28,
-        "max_upload_mtu": 200,
-        "min_download_mtu": 60,
-        "max_download_mtu": 900,
-        "arq_initial_rto_seconds": 2,
-        "ping_aggressive_interval_seconds": 0.05,
-        "ping_lazy_interval_seconds": 0.5,
-        "ping_cooldown_interval_seconds": 2,
-        "ping_cold_interval_seconds": 15
-    })
-elif ptype == 2:
-    p["profile"].update({
-        "packet_duplication_count": 2,
-        "setup_packet_duplication_count": 2,
-        "base_encode_data": False,
-        "min_upload_mtu": 38,
-        "max_upload_mtu": 150,
-        "min_download_mtu": 100,
-        "max_download_mtu": 500,
-        "arq_initial_rto_seconds": 1,
-        "ping_aggressive_interval_seconds": 0.1,
-        "ping_lazy_interval_seconds": 0.75,
-        "ping_cooldown_interval_seconds": 2,
-        "ping_cold_interval_seconds": 15
-    })
-elif ptype == 3:
-    p["profile"].update({
-        "packet_duplication_count": 1,
-        "setup_packet_duplication_count": 2,
-        "base_encode_data": False,
-        "min_upload_mtu": 38,
-        "max_upload_mtu": 150,
-        "min_download_mtu": 100,
-        "max_download_mtu": 500,
-        "arq_initial_rto_seconds": 1,
-        "ping_aggressive_interval_seconds": 0.1,
-        "ping_lazy_interval_seconds": 0.75,
-        "ping_cooldown_interval_seconds": 4,
-        "ping_cold_interval_seconds": 30
-    })
-
-raw = json.dumps(p, separators=(',', ':'))
-print("stormdns://" + base64.b64encode(raw.encode('utf-8')).decode('utf-8'))
+raw = json.dumps(p, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+# Match MasterDnsConfig.parse limits, including the inner URI in TUNA export.
+if len(raw) > 65536:
+    sys.exit('Профиль MasterDNS превышает допустимый размер')
+uri = "stormdns://" + base64.b64encode(raw).decode('ascii')
+if len(uri) > 100000:
+    sys.exit('Ссылка MasterDNS превышает допустимый размер')
+if export_format == 'tuna':
+    # Profile.sanitize supports the stable quick-input {name, uri} fields.
+    # Omitting id lets the client assign a fresh profile identity on import.
+    document = json.dumps({'name': name, 'uri': uri}, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    if len(document) > 4 * 1024 * 1024:
+        sys.exit('Профиль TUNA превышает допустимый размер')
+    encoded = base64.urlsafe_b64encode(zlib.compress(document, level=9)).decode('ascii').rstrip('=')
+    if len(encoded) > 128 * 1024:
+        sys.exit('Ссылка TUNA превышает допустимый размер')
+    print('tuna://' + encoded)
+else:
+    print(uri)
 PYEOF
 }
 
@@ -2745,7 +2760,8 @@ show_single_dns_profile() {
     local base_name=$(get_dns_profile_name)
     local pname="${base_name}"
     [ -n "$tag" ] && pname="${base_name} [${tag}]"
-    local link=$(get_stormdns_link "$ptype" "$dom" "$key" "$pname")
+    local export_format
+    export_format=$(choose_dns_export_format) || return
 
     clear
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
@@ -2754,15 +2770,13 @@ show_single_dns_profile() {
     echo ""
     echo -e "${BOLD}Параметры профиля:${NC}"
     echo -e "  • Имя профиля:   ${YELLOW}${pname}${NC}"
-    echo -e "  • Домен зоны:    ${CYAN}${dom}${NC}"
-    echo -e "  • Ключ:          ${GREEN}${key}${NC} (AES-256-GCM)"
-    echo -e "  • Особенности:   ${YELLOW}${desc}${NC}"
+    echo -e "  • Первый домен:  ${CYAN}${dom}${NC}"
+    echo '  • Все домены профиля:'
+    get_dns_domains || return 1
+    echo -e "  • Ключ:          ${GREEN}${key}${NC} ($(get_dns_encryption_name))"
+    printf '  • Параметры: %s\n' "$(get_dns_profile_summary "$ptype")"
     echo ""
-    echo -e "${BOLD}--- QR-код для сканирования в приложении WhiteDNS / StormDNS ---${NC}"
-    qrencode -t ANSI256 "$link" 2>/dev/null || qrencode -t UTF8 "$link" 2>/dev/null || echo "qrencode не смог отрендерить"
-    echo ""
-    echo -e "${BOLD}--- Ссылка для импорта (stormdns://) ---${NC}"
-    echo -e "${CYAN}${link}${NC}"
+    emit_dns_profile_links "$ptype" "$pname" "$export_format" yes || return 1
     echo ""
     read -p "Нажмите Enter для возврата..."
 }
@@ -2778,19 +2792,19 @@ show_dns_profiles() {
         echo -e "${CYAN}║${BOLD}          ПРОФИЛИ ПОДКЛЮЧЕНИЯ WHITEDNS / STORMDNS                     ${CYAN}║${NC}"
         echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
         echo -e "${CYAN}║${NC}  Имя базы: ${YELLOW}${BOLD}${base_pname}${NC}"
-        echo -e "${CYAN}║${NC}  Домен:    ${BOLD}${dom}${NC}  |  Ключ: ${GREEN}${key:0:16}...${NC}  |  AES-256-GCM"
+        echo -e "${CYAN}║${NC}  Домен:    ${BOLD}${dom}${NC}  |  Ключ: ${GREEN}${key:0:16}...${NC}  |  $(get_dns_encryption_name)"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo -e "  ${YELLOW}[1]${NC} 🛡️  ${BOLD}Профиль 1: «Жесткая цензура»${NC}"
-        echo "      (Дублирование x4, base32 кодирование, агрессивный пинг, безопасный MTU 28-200)"
+        printf '      %s\n' "$(get_dns_profile_summary 1)"
         echo ""
         echo -e "  ${YELLOW}[2]${NC} ⚡ ${BOLD}Профиль 2: «Стандартный»${NC}"
-        echo "      (Дублирование x2, оптимальная скорость и низкая задержка, MTU 38-150)"
+        printf '      %s\n' "$(get_dns_profile_summary 2)"
         echo ""
         echo -e "  ${YELLOW}[3]${NC} 🚀 ${BOLD}Профиль 3: «Мобильный / Скоростной»${NC}"
-        echo "      (Дублирование x1, энергосбережение батареи, увеличенные тайм-ауты ожидания)"
+        printf '      %s\n' "$(get_dns_profile_summary 3)"
         echo ""
-        echo -e "  ${YELLOW}[4]${NC} 📋 ${BOLD}Показать все 3 ссылки списком для копирования${NC}"
+        echo -e "  ${YELLOW}[4]${NC} 📋 ${BOLD}Экспортировать все 3 профиля списком${NC}"
         echo -e "  ${YELLOW}[0]${NC} ⬅️  Назад в меню DNS-туннелей"
         echo ""
         read -p "Выберите профиль [0-4]: " prof_choice
@@ -2805,19 +2819,21 @@ show_dns_profiles() {
                 show_single_dns_profile 3 "ПРОФИЛЬ 3: МОБИЛЬНЫЙ / СКОРОСТНОЙ (LOW BATTERY)" "Дублирование x1, Пинг 100ms, Cooldown 4s, MTU 38..150/100..500" "Скоростной"
                 ;;
             4)
+                local export_format
+                export_format=$(choose_dns_export_format) || continue
                 clear
                 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
                 echo -e "${CYAN}║${BOLD}          ВСЕ 3 ПРОФИЛЯ ПОДКЛЮЧЕНИЯ ДЛЯ КОПИРОВАНИЯ                   ${CYAN}║${NC}"
                 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
                 echo ""
                 echo -e "${YELLOW}${BOLD}1. Жесткая цензура (${base_pname} [Жесткая цензура]):${NC}"
-                get_stormdns_link 1 "$dom" "$key" "${base_pname} [Жесткая цензура]"
+                emit_dns_profile_links 1 "${base_pname} [Жесткая цензура]" "$export_format" no || return 1
                 echo ""
                 echo -e "${YELLOW}${BOLD}2. Стандартный (${base_pname} [Стандартный]):${NC}"
-                get_stormdns_link 2 "$dom" "$key" "${base_pname} [Стандартный]"
+                emit_dns_profile_links 2 "${base_pname} [Стандартный]" "$export_format" no || return 1
                 echo ""
                 echo -e "${YELLOW}${BOLD}3. Мобильный / Скоростной (${base_pname} [Скоростной]):${NC}"
-                get_stormdns_link 3 "$dom" "$key" "${base_pname} [Скоростной]"
+                emit_dns_profile_links 3 "${base_pname} [Скоростной]" "$export_format" no || return 1
                 echo ""
                 read -p "Нажмите Enter для возврата..."
                 ;;
@@ -2826,67 +2842,81 @@ show_dns_profiles() {
     done
 }
 
+choose_dns_export_format() {
+    local choice
+    printf '  [1] StormDNS — отдельная ссылка на каждый домен\n  [2] TUNA — одна ссылка, все домены в одном профиле\n  [0] Назад\n' >&2
+    read -r -p 'Формат экспорта: ' choice || return 1
+    case "$choice" in 1) printf 'storm\n';; 2) printf 'tuna\n';; *) return 1;; esac
+}
+
+emit_dns_profile_links() {
+    local ptype="$1" pname="$2" export_format="$3" render_qr="${4:-no}"
+    local key domain link profile_name domain_text
+    local -a domains=()
+    key=$(get_dns_key) || return 1
+    domain_text=$(get_dns_domains) || return 1
+    mapfile -t domains <<< "$domain_text"
+    case "$export_format" in
+        tuna)
+            link=$(get_stormdns_link "$ptype" "${domains[0]}" "$key" "$pname" tuna) || return 1
+            printf '\nTUNA: все %s доменов в одном профиле\n' "${#domains[@]}"
+            if [ "$render_qr" = yes ]; then
+                qrencode -t ANSI256 "$link" 2>/dev/null || qrencode -t UTF8 "$link" 2>/dev/null || echo 'QR-код не помещается; используйте ссылку.'
+            fi
+            printf '%s\n' "$link"
+            ;;
+        storm)
+            for domain in "${domains[@]}"; do
+                profile_name="$pname [$domain]"
+                link=$(get_stormdns_link "$ptype" "$domain" "$key" "$profile_name" storm) || return 1
+                printf '\nStormDNS: %s\n' "$domain"
+                if [ "$render_qr" = yes ]; then
+                    qrencode -t ANSI256 "$link" 2>/dev/null || qrencode -t UTF8 "$link" 2>/dev/null || echo 'QR-код не помещается; используйте ссылку.'
+                fi
+                printf '%s\n' "$link"
+            done
+            ;;
+        *) echo 'Неизвестный формат экспорта.' >&2; return 1;;
+    esac
+}
+
 dns_change_domain() {
-    clear
-    local cur_dom=$(get_dns_domain)
-    local base_d=$(detect_base_domain)
-    local suggest="d.${base_d}"
-    [ -z "$base_d" ] && suggest="$cur_dom"
-    echo -e "${BOLD}--- Смена домена DNS-зоны ---${NC}"
-    echo -e "Текущий домен туннеля:   ${CYAN}${cur_dom}${NC}"
-    [ -n "$base_d" ] && echo -e "Базовый домен сервера:    ${GREEN}${base_d}${NC} (предлагаемый: ${CYAN}${suggest}${NC})"
-    echo ""
-    read -p "Введите новый домен DNS-зоны [Enter для $suggest]: " new_dom
-    new_dom=$(echo "$new_dom" | tr -d '[:space:]')
-    [ -z "$new_dom" ] && new_dom="$suggest"
-    [ -z "$new_dom" ] && return
-
-    if [[ "$new_dom" != d.* ]]; then
-        new_dom="d.${new_dom}"
-        echo -e "${YELLOW}Автоматически добавлен префикс 'd.': ${new_dom}${NC}"
-    fi
-
-    if [ -f "$MASTERDNS_CONFIG_FILE" ]; then
-        sed -i 's/^DOMAIN\s*=.*/DOMAIN = ["'"$new_dom"'"]/' "$MASTERDNS_CONFIG_FILE"
-    fi
-
-    local cur_s=$(get_active_dns_engine)
-    systemctl restart "$cur_s" 2>/dev/null || true
-    echo -e "${GREEN}✓ Домен зоны успешно изменен на: ${new_dom}!${NC}"
-    sleep 2
+    python3 "$(xm_masterdns_domains_helper)" menu --config "$MASTERDNS_CONFIG_FILE"
 }
 
 dns_change_key() {
     clear
-    local cur_key=$(get_dns_key)
-    echo -e "${BOLD}--- Смена ключа шифрования (AES-256-GCM) ---${NC}"
+    local cur_key key_length method_name
+    cur_key=$(get_dns_key) || return 1
+    key_length=$(python3 "$(xm_masterdns_domains_helper)" key-length --config "$MASTERDNS_CONFIG_FILE") || return 1
+    method_name=$(get_dns_encryption_name) || return 1
+    echo -e "${BOLD}--- Смена ключа шифрования (${method_name}) ---${NC}"
     echo -e "Текущий ключ: ${GREEN}${cur_key}${NC}"
     echo ""
-    echo -e "  ${YELLOW}[1]${NC} Сгенерировать новый случайный ключ (32 hex)"
-    echo -e "  ${YELLOW}[2]${NC} Ввести свой 32-байтный hex-ключ"
+    echo -e "  ${YELLOW}[1]${NC} Сгенерировать новый случайный ключ (${key_length} символов hex)"
+    echo -e "  ${YELLOW}[2]${NC} Ввести свой hex-ключ (${key_length} символов)"
     echo -e "  ${YELLOW}[0]${NC} Отмена"
     echo ""
     read -p "Выберите вариант [0-2]: " k_choice
     local new_key=""
     case "$k_choice" in
         1)
-            new_key=$(openssl rand -hex 16 2>/dev/null || echo "a7125b5f3cc23e525123c677bc6d202e")
+            new_key=$(openssl rand -hex "$((key_length / 2))") || return 1
             ;;
         2)
-            read -p "Введите hex ключ (32 символа): " custom_k
+            read -p "Введите hex ключ (${key_length} символов): " custom_k
             new_key=$(echo "$custom_k" | tr -d '[:space:]')
             ;;
         *) return ;;
     esac
 
     [ -z "$new_key" ] && return
-    mkdir -p "$MASTERDNS_DIR"
-    echo -n "$new_key" > "$MASTERDNS_KEY_FILE"
-    chmod 600 "$MASTERDNS_KEY_FILE"
-
-    local cur_s=$(get_active_dns_engine)
-    systemctl restart "$cur_s" 2>/dev/null || true
-    echo -e "${GREEN}✓ Ключ шифрования успешно обновлен: ${new_key}${NC}"
+    if [[ ! "$new_key" =~ ^[[:xdigit:]]+$ ]] || [ "${#new_key}" -ne "$key_length" ]; then
+        echo 'Некорректная длина или формат ключа; изменений нет.' >&2
+        return 1
+    fi
+    printf '%s' "$new_key" | python3 "$(xm_masterdns_domains_helper)" set-key --config "$MASTERDNS_CONFIG_FILE" || return 1
+    echo 'Выдайте клиентам новый экспорт. Выданные подписки автоматически не изменяются.'
     sleep 2
 }
 
@@ -2927,23 +2957,27 @@ menu_dns_settings() {
         echo -e "${CYAN}║${BOLD}                 НАСТРОЙКИ ПАРАМЕТРОВ DNS-ТУННЕЛЯ                      ${CYAN}║${NC}"
         echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
         echo -e "${CYAN}║${NC}  Домен зоны:  ${CYAN}${BOLD}$(get_dns_domain)${NC}"
-        echo -e "${CYAN}║${NC}  Ключ шифр.:  ${GREEN}$(get_dns_key)${NC} (AES-256-GCM)"
+        echo -e "${CYAN}║${NC}  Ключ шифр.:  ${GREEN}$(get_dns_key)${NC} ($(get_dns_encryption_name))"
         echo -e "${CYAN}║${NC}  Имя профиля: ${YELLOW}${BOLD}$(get_dns_profile_name)${NC}"
         echo -e "${CYAN}║${NC}  Маршрут:     $(get_dns_routing)"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "  ${YELLOW}[1]${NC} 🌐 Сменить домен DNS-зоны"
+        echo -e "  ${YELLOW}[1]${NC} 🌐 Домены этого сервера"
         echo -e "  ${YELLOW}[2]${NC} 🔑 Сменить / сгенерировать ключ шифрования"
         echo -e "  ${YELLOW}[3]${NC} 🏷️  Сменить имя подключения (профилей в приложении)"
         echo -e "  ${YELLOW}[4]${NC} 🔀 Изменить маршрутизацию (Xray SOCKS5 / Direct)"
+        echo -e "  ${YELLOW}[5]${NC} 🔐 Метод шифрования: $(get_dns_encryption_name)"
+        echo -e "  ${YELLOW}[6]${NC} Параметры экспортируемых ссылок"
         echo -e "  ${YELLOW}[0]${NC} ⬅️  Назад"
         echo ""
-        read -p "Выберите пункт [0-4]: " s_choice
+        read -p "Выберите пункт [0-6]: " s_choice
         case "$s_choice" in
             1) dns_change_domain ;;
             2) dns_change_key ;;
             3) dns_change_profile_name ;;
             4) dns_change_routing ;;
+            5) dns_change_encryption ;;
+            6) menu_dns_link_profiles ;;
             0) return ;;
         esac
     done
@@ -2952,9 +2986,16 @@ menu_dns_settings() {
 
 install_masterdns() {
     local domain
-    read -r -p 'Домен DNS-туннеля (NS-зона должна вести на этот сервер; Enter — назад): ' domain || return
-    [ -n "$domain" ] || return 0
-    bash /usr/local/share/x-manager/distribution/scripts/install-masterdns.sh "$domain" || { xm_pause; return 1; }
+    local -a domains=()
+    if is_masterdns_installed; then
+        echo 'Повторная установка сохраняет все домены. Изменить список: «Домены этого сервера».'
+        xm_confirm 'Обновить MasterDNS с сохранением конфигурации?' || return
+    else
+        read -r -p 'Домены DNS-туннеля через пробел (1–16; Enter — назад): ' domain || return
+        [ -n "$domain" ] || return 0
+        read -r -a domains <<< "$domain"
+    fi
+    bash /usr/local/share/x-manager/distribution/scripts/install-masterdns.sh "${domains[@]}" || { xm_pause; return 1; }
     xm_pause
 }
 
@@ -2984,13 +3025,15 @@ menu_dns() {
         xm_header 'MasterDnsVPN'
         printf '  Служба: %s
 ' "$(get_dns_status)"
+        printf '  Домены туннеля: %s\n  Маршрут: %b\n' "$(get_dns_domains 2>/dev/null | awk 'END {print NR}')" "$(get_dns_routing)"
         printf '  [1] Настроить / установить
-  [2] Показать ссылки
-  [3] Настройки
+  [2] Показать / экспортировать профиль
+  [3] Параметры подключения
   [4] Доступ через firewall
   [5] Журнал
   [6] Включить
   [7] Выключить постоянно
+  [8] Домены этого сервера
   [0] Назад
 '
         read -r -p 'Действие: ' choice || return
@@ -3001,6 +3044,7 @@ menu_dns() {
             5) journalctl -u masterdns -n 30 --no-pager; xm_pause;;
             6) xm_direct_service_action on masterdns.service;;
             7) xm_direct_service_action off masterdns.service;;
+            8) is_masterdns_installed && dns_change_domain;;
             0) return;; *) echo 'Выберите номер из списка.';;
         esac
     done

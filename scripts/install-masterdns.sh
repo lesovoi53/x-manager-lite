@@ -6,13 +6,14 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 . "$SCRIPT_DIR/scripts/firewall-common.sh"
 xm_preflight
 python3 "$SCRIPT_DIR/scripts/lite-edition.py" check
-[ "$#" = 1 ] || xm_die 'Укажите домен DNS-зоны'
-python3 - "$1" <<'PY'
-import re,sys
-domain=sys.argv[1]
-if len(domain)>253 or '.' not in domain or not all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?',x) for x in domain.split('.')):
-    sys.exit('Некорректный домен DNS-зоны')
-PY
+# No arguments updates an existing installation without changing its domains.
+# One or more positional domains explicitly replace the list (legacy one-domain CLI).
+if [ "$#" -gt 0 ]; then
+    python3 "$SCRIPT_DIR/scripts/masterdns-domains.py" validate "$@"
+else
+    [ -f /etc/masterdns/server_config.toml ] || xm_die 'Укажите от 1 до 16 доменов DNS-зоны'
+    python3 "$SCRIPT_DIR/scripts/masterdns-domains.py" list >/dev/null
+fi
 for dep in curl python3 openssl ss iptables; do command -v "$dep" >/dev/null || xm_die "Нет зависимости: $dep"; done
 listen=0.0.0.0
 if [ ! -f /etc/masterdns/server_config.toml ]; then
@@ -45,19 +46,23 @@ fi
 [ ! -r /etc/x-manager/gateways.env ] || . /etc/x-manager/gateways.env
 route=xray
 [ ! -f /etc/snell/routing.mode ] || route=$(cat /etc/snell/routing.mode)
-python3 - "$1" "${XRAY_SOCKS_PORT:-10808}" "$route" "$listen" <<'PY'
+python3 - "$SCRIPT_DIR/scripts/masterdns-domains.py" "${XRAY_SOCKS_PORT:-10808}" "$route" "$listen" "$@" <<'PY'
 from pathlib import Path
-import json,re,sys
+import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location('masterdns_domains',sys.argv[1])
+helper=importlib.util.module_from_spec(spec);spec.loader.exec_module(helper)
 path=Path('/etc/masterdns/server_config.toml')
 if path.is_symlink():sys.exit('Конфигурация MasterDNS не должна быть symlink')
-domain=json.dumps(sys.argv[1]);port=int(sys.argv[2])
+domains=helper.validate(sys.argv[5:]) if sys.argv[5:] else None
+port=int(sys.argv[2])
 if not 1<=port<=65535 or port in (443,8443):sys.exit('Некорректный порт шлюза')
 if path.exists():
-    text=path.read_text()
-    if len(re.findall(r'^DOMAIN\s*=',text,re.M))!=1:sys.exit('Некорректная конфигурация DOMAIN')
-    text=re.sub(r'^DOMAIN\s*=.*$',lambda _: 'DOMAIN = ['+domain+']',text,flags=re.M)
+    text=helper.snapshot(path).decode('utf-8')
+    helper.read_domains(text)
+    if domains is not None:text=helper.replace_domains(text,domains)
 else:
-    text=f'''DOMAIN = [{domain}]
+    if domains is None:sys.exit('Укажите домены для новой установки')
+    text=f'''DOMAIN = {json.dumps(domains)}
 PROTOCOL_TYPE = "SOCKS5"
 UDP_HOST = {json.dumps(sys.argv[4])}
 UDP_PORT = 53
@@ -77,8 +82,10 @@ LOG_LEVEL = "INFO"
 '''
 import tomllib
 tomllib.loads(text)
-temp=path.with_suffix('.new');temp.write_text(text);temp.chmod(0o600);temp.replace(path)
+helper.atomic_write(path,text.encode('utf-8'),path.stat() if path.exists() else None)
 PY
+install -d -m 0755 /usr/local/share/x-manager/scripts
+install -m 0644 "$SCRIPT_DIR/scripts/"{masterdns-domains.py,masterdns-link-profiles.py} /usr/local/share/x-manager/scripts/
 xm_write_unit /etc/systemd/system/masterdns.service <<'EOF'
 [Unit]
 Description=MasterDnsVPN DNS Tunnel
