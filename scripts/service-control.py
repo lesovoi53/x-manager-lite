@@ -16,19 +16,15 @@ import subprocess
 import sys
 import tempfile
 
-SERVICES = ["tuna-subscriptions", "snell", "mita", "wdtt",
-            "wdtt-tproxy", "csqtt", "masterdns", "x-ui",
-            "xray", "sing-box", "caddy", "vpn-watchdog", "tuna-watchdog", "tuna-healthcheck", "tuna-recovery", "fail2ban"]
-UNITS = tuple([name + ".service" for name in SERVICES]
-              + ["snell6@%d.service" % i for i in range(1, 9)]
-              + ["vpn-watchdog.timer", "tuna-watchdog.timer", "tuna-healthcheck.timer", "tuna-recovery.timer"])
-EXTERNAL_WATCHDOGS = ("vpn-watchdog.service", "vpn-watchdog.timer",
-                      "tuna-watchdog.service", "tuna-watchdog.timer")
+SERVICES = ["tuna-subscriptions", "mita", "wdtt",
+            "wdtt-tproxy", "masterdns", "x-ui",
+            "xray", "sing-box", "caddy", "fail2ban"]
+UNITS = tuple([name + ".service" for name in SERVICES])
+EXTERNAL_WATCHDOGS = ()
 STATE_DIR = "/etc/x-manager/service-control"
 RUNTIME_DIR = "/run/x-manager/service-control"
 DROPIN = "95-tuna-service-control.conf"
 HEADER = "# Managed by X-Manager service-control.py; use its lifecycle commands.\n"
-SNELL_UNITS = ("snell.service",) + tuple("snell6@%d.service" % i for i in range(1, 9))
 
 
 def canonical(unit):
@@ -138,49 +134,9 @@ class Controller:
         permanent, stopped = self.markers(unit)
         if intent.get("off") or permanent.exists():
             return False
-        try:
-            self.check_snell_selection(unit)
-        except (ValueError, OSError, RuntimeError):
-            return False
         if enable:
             return intent.get("autostart") is not False
         return not stopped.exists()
-
-    def check_snell_selection(self, unit):
-        """All public activation paths respect the single selected Snell server."""
-        if unit not in SNELL_UNITS or getattr(self, "_snell_switch_authorized", False):
-            return
-        marker = self.path("/etc/x-manager/snell-active.json")
-        if marker.exists() or marker.is_symlink():
-            # Share marker validation with the switch transaction. Import here
-            # avoids a module-level cycle: snell-switch itself uses Controller.
-            spec = importlib.util.spec_from_file_location(
-                "snell_selection_guard", Path(__file__).with_name("snell-switch.py"))
-            selection = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(selection)
-            chosen = selection.read_selection(self.root)
-            if chosen is None:
-                raise ValueError("Snell selection changed; retry using snell-switch")
-            if chosen["unit"] != unit:
-                raise ValueError("Эта версия или слот Snell не выбраны; используйте snell-switch")
-            if chosen["version"] == 6:
-                endpoint = self.path("/etc/snell6/endpoints/" + chosen["slot"] + "/endpoint.json")
-                if endpoint.is_symlink():
-                    raise ValueError("Endpoint identity must not be a symlink; use snell-switch")
-                value = json.loads(endpoint.read_text(encoding="utf-8"))
-                if not isinstance(value, dict) or value.get("endpoint_id") != chosen["endpoint_id"]:
-                    raise ValueError("Selected Snell endpoint identity changed; use snell-switch")
-        # A missing marker supports existing installations only when no other
-        # version/slot can already run or start at boot. Never silently stop it.
-        for other in SNELL_UNITS:
-            if other == unit:
-                continue
-            live = self.show(other)
-            if live.get("LoadState") not in ("loaded", "masked"):
-                continue
-            if (live.get("ActiveState") in ("active", "activating", "reloading", "deactivating")
-                    or live.get("UnitFileState") in ("enabled", "enabled-runtime")):
-                raise ValueError("Другая версия или слот Snell активны либо включены; используйте snell-switch")
 
     def dropin(self, unit):
         return self.path("/etc/systemd/system/" + unit + ".d/" + DROPIN)
@@ -248,8 +204,6 @@ class Controller:
             if action in ("on", "start", "restart", "autostart-on") and (
                     live.get("LoadState") == "masked" or live.get("UnitFileState", "").startswith("masked")):
                 raise ValueError("Administrator mask preserved; explicit unmask required for " + unit)
-            if action in ("on", "start", "restart", "autostart-on"):
-                self.check_snell_selection(unit)
             if action == "off":
                 # Record inhibition before any systemd change. On partial failure
                 # it stays inhibited and can be retried; never revive it in rollback.
@@ -367,20 +321,16 @@ def unit_menu(controller, units=None):
 
 
 LABELS = {"tuna-subscriptions.service":"Подписки TUNA", "webdav-tunnel.service":"WebDAV",
-          "snell.service":"Snell v5", "mita.service":"Mieru", "wdtt.service":"WDTT",
-          "csqtt.service":"CSQTT", "masterdns.service":"MasterDNS", "cottendns.service":"CottenDNS",
+          "mita.service":"Mieru", "wdtt.service":"WDTT",
+          "masterdns.service":"MasterDNS", "cottendns.service":"CottenDNS",
           "x-ui.service":"Панель X-UI", "xray.service":"Xray", "fail2ban.service":"Fail2ban",
           "wdtt-tproxy.service":"Маршрутизация WDTT", "volga-cookies.service":"Обновление cookies Волги",
-          "volga-cookies.timer":"Расписание обновления cookies", "tuna-healthcheck.service":"Проверка работоспособности",
-          "tuna-healthcheck.timer":"Расписание проверок", "vpn-watchdog.service":"Внешний VPN Watchdog",
-          "tuna-watchdog.service":"Прежний TUNA Watchdog", "tuna-watchdog.timer":"Расписание прежнего Watchdog"}
+          "volga-cookies.timer":"Расписание обновления cookies"}
 
 
 def service_name(unit):
     if unit.startswith("openflux@"):
         return "Канал " + unit.split("@")[1].split(".")[0]
-    if unit.startswith("snell6@"):
-        return "Snell v6 — подключение " + unit.split("@")[1].split(".")[0]
     return LABELS.get(unit, unit.removesuffix(".service").removesuffix(".timer"))
 
 
@@ -395,27 +345,18 @@ def service_state(state):
 
 
 def menu_entries(controller):
-    rows=[]; snell=[]; flux=[]; extra=[]
-    auxiliary={"wdtt-tproxy.service","volga-cookies.service","volga-cookies.timer","tuna-healthcheck.service",
-               "tuna-healthcheck.timer","vpn-watchdog.service","vpn-watchdog.timer","tuna-watchdog.service","tuna-watchdog.timer"}
+    rows=[]; flux=[]; extra=[]
+    auxiliary={"wdtt-tproxy.service","volga-cookies.service","volga-cookies.timer"}
     for unit in UNITS:
         state=controller.status(unit)
         if state.get("LoadState") not in ("loaded","masked"):continue
-        if unit.startswith("snell6@"):
-            slot=unit.split("@")[1].split(".")[0]
-            if not (controller.path('/etc/snell6/endpoints')/slot/'endpoint.json').is_file() and state.get("ActiveState")!='active':continue
-            snell.append(state)
-        elif unit=='snell.service':snell.append(state)
-        elif unit.startswith('openflux@'):
+        if unit.startswith('openflux@'):
             slot=unit.split('@')[1].split('.')[0]
             path=controller.path('/etc/openflux/instances')/(slot+'.env')
             configured=path.is_file() and re.search(r'(?m)^URL=["\']?[^"\'\s]',path.read_text())
             if configured or state.get('ActiveState') in ('active','failed'):flux.append(state)
         elif unit in auxiliary:extra.append(state)
         else:rows.append((service_name(unit)+' — '+service_state(state),[unit]))
-    if snell:
-        active=[service_name(x['unit']) for x in snell if x.get('ActiveState')=='active']
-        rows.insert(min(2,len(rows)),('Snell — '+(', '.join(active) if active else 'остановлен'),[x['unit'] for x in snell]))
     if flux:rows.append(('OpenFlux — работают '+str(sum(x.get('ActiveState')=='active' for x in flux))+' из '+str(len(flux))+' каналов',[x['unit'] for x in flux]))
     if extra:rows.append(('Служебные задачи и расписания',[x['unit'] for x in extra]))
     return rows

@@ -3,7 +3,7 @@
 xm_die() { printf 'X-Manager: %s\n' "$*" >&2; exit 1; }
 
 xm_check_external_watchdog() {
-    python3 "$SCRIPT_DIR/scripts/installer-state.py" watchdog-check
+    return 0
 }
 
 xm_preflight() {
@@ -72,13 +72,12 @@ PY
 }
 
 xm_validate_ports() {
-    python3 - "$SNELL_PORT" "$MIERU_PORTS" <<'PY'
+    python3 - "$MIERU_PORTS" <<'PY'
 import sys
-snell = int(sys.argv[1])
-ports = [int(p) for p in sys.argv[2].split('-')]
-for start, end in ((snell, snell), (ports[0], ports[-1])):
-    if not 1 <= start <= end <= 65535 or any(start <= p <= end for p in (443, 8443)):
-        sys.exit('Invalid or forbidden listener port: no configuration was written')
+ports = [int(p) for p in sys.argv[1].split('-')]
+start, end = ports[0], ports[-1]
+if not 1 <= start <= end <= 65535 or any(start <= p <= end for p in (443, 8443)):
+    sys.exit('Invalid or forbidden listener port: no configuration was written')
 PY
 }
 
@@ -122,10 +121,6 @@ xm_begin() {
     cp "$SCRIPT_DIR/scripts/network-profile.py" "$XM_BACKUP/network-profile.py"
     python3 "$XM_BACKUP/installer-state.py" backup "$XM_BACKUP" "$SCRIPT_DIR/tuna-sub-server/tuna-subscriptions.py"
     printf 'Backup: %s\n' "$XM_BACKUP"
-    # The EXIT trap also resumes a partially paused watchdog on stop failure.
-    XM_WATCHDOG_MAINTENANCE=1
-    echo 'Обслуживание: временная пауза активных vpn-watchdog.timer/service; автозапуск сохраняется.'
-    python3 "$XM_BACKUP/installer-state.py" watchdog-pause "$XM_BACKUP"
     XM_TRANSACTION=1
 }
 
@@ -147,23 +142,12 @@ xm_exit() {
             rollback_failed=1
         fi
     fi
-    if [ "$rollback_failed" = 1 ]; then
-        printf 'Watchdog remains paused after rollback failure. Repair the saved backup state, then run install.sh --recover-watchdog.\n' >&2
-    elif [ "${XM_WATCHDOG_MAINTENANCE:-0}" = 1 ]; then
-        if ! python3 "$XM_BACKUP/installer-state.py" watchdog-resume; then
-            printf 'WATCHDOG RESTORE FAILED. Inspect /var/lib/x-manager/maintenance-watchdog.json; run install.sh --recover-watchdog after resolving the conflict.\n' >&2
-            status=1
-        fi
-    fi
     if [ -n "${WORK_DIR:-}" ] && [[ "$WORK_DIR" = /tmp/* ]]; then rm -rf -- "$WORK_DIR"; fi
     exit "$status"
 }
 
 xm_finish() {
     XM_TRANSACTION=0
-    python3 "$XM_BACKUP/installer-state.py" watchdog-resume
-    XM_WATCHDOG_MAINTENANCE=0
-    echo 'Обслуживание завершено: исходное активное состояние vpn-watchdog восстановлено.'
 }
 trap xm_exit EXIT
 trap 'exit 130' INT

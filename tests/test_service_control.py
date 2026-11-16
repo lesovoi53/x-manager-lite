@@ -21,10 +21,6 @@ class Systemd:
         self.units = {u: {"LoadState": "loaded", "ActiveState": "active", "UnitFileState": "enabled",
                           "Type": "simple", "Restart": "always", "Result": "success"}
                       for u in control.UNITS}
-        # Legacy installation: v5 is running; optional v6 slots are dormant.
-        for unit, state in self.units.items():
-            if unit.startswith("snell6@"):
-                state.update(ActiveState="inactive", UnitFileState="disabled")
         self.fail_action = None
         self.conditions_removed = False
         self.competing_restart = False
@@ -74,21 +70,21 @@ class ServiceControl(unittest.TestCase):
         self.control = control.Controller(self.root, self.systemd)
 
     def test_permanent_off_preserves_local_unit_and_blocks_external_starts(self):
-        local = self.root / "etc/systemd/system/snell.service"
+        local = self.root / "etc/systemd/system/masterdns.service"
         local.parent.mkdir(parents=True)
-        local.write_bytes(b"[Service]\nExecStart=/usr/local/bin/snell-server\n")
+        local.write_bytes(b"[Service]\nExecStart=/usr/local/bin/masterdns-server\n")
         original = local.read_bytes()
-        result = self.control.change("off", "snell")
+        result = self.control.change("off", "masterdns")
         self.assertTrue(result["off"])
         self.assertEqual(result["ActiveState"], "inactive")
         self.assertEqual(result["UnitFileState"], "disabled")
         self.assertEqual(local.read_bytes(), original)
         self.assertFalse(any(call[1] in ("mask", "unmask") for call in self.systemd.calls))
-        self.systemd("systemctl", "start", "snell.service")
-        self.systemd("systemctl", "restart", "snell.service")
-        self.assertEqual(self.control.status("snell")["ActiveState"], "inactive")
-        self.assertFalse(self.control.allowed("snell"))
-        self.assertFalse(self.control.allowed("snell", enable=True))
+        self.systemd("systemctl", "start", "masterdns.service")
+        self.systemd("systemctl", "restart", "masterdns.service")
+        self.assertEqual(self.control.status("masterdns")["ActiveState"], "inactive")
+        self.assertFalse(self.control.allowed("masterdns"))
+        self.assertFalse(self.control.allowed("masterdns", enable=True))
 
     def test_off_survives_new_controller_and_installer_reconcile(self):
         self.control.change("off", "mita")
@@ -100,18 +96,18 @@ class ServiceControl(unittest.TestCase):
         self.assertEqual(updated.status("masterdns")["ActiveState"], "active")
 
     def test_start_cannot_clear_permanent_off_or_enable_autostart(self):
-        self.control.change("off", "snell")
+        self.control.change("off", "masterdns")
         for action in ("start", "restart", "autostart-on"):
             with self.subTest(action=action), self.assertRaisesRegex(ValueError, "постоянно"):
-                self.control.change(action, "snell")
-        self.assertTrue(self.control.status("snell")["off"])
+                self.control.change(action, "masterdns")
+        self.assertTrue(self.control.status("masterdns")["off"])
 
     def test_on_reverses_only_owned_inhibit_and_restores_start(self):
-        foreign = self.root / "etc/systemd/system/snell.service.d/50-user.conf"
+        foreign = self.root / "etc/systemd/system/masterdns.service.d/50-user.conf"
         foreign.parent.mkdir(parents=True)
         foreign.write_text("[Service]\nLimitNOFILE=10000\n")
-        self.control.change("off", "snell")
-        result = self.control.change("on", "snell")
+        self.control.change("off", "masterdns")
+        result = self.control.change("on", "masterdns")
         self.assertFalse(result["off"])
         self.assertEqual(result["ActiveState"], "active")
         self.assertEqual(result["UnitFileState"], "enabled")
@@ -131,29 +127,28 @@ class ServiceControl(unittest.TestCase):
 
     def test_boot_clears_runtime_stop_but_retains_persistent_off(self):
         self.control.change("stop", "mita")
-        self.control.change("off", "snell")
+        self.control.change("off", "masterdns")
         # /run is tmpfs: model only our runtime marker disappearing on reboot.
         self.control.markers("mita.service")[1].unlink()
         rebooted = control.Controller(self.root, self.systemd)
         rebooted.reconcile()
         self.assertTrue(rebooted.allowed("mita"))
-        self.assertFalse(rebooted.allowed("snell"))
+        self.assertFalse(rebooted.allowed("masterdns"))
 
     def test_autostart_off_does_not_stop_and_allows_manual_start(self):
-        self.control.change("autostart-off", "snell")
-        self.assertEqual(self.control.status("snell")["ActiveState"], "active")
-        self.assertFalse(self.control.allowed("snell", enable=True))
-        self.assertTrue(self.control.allowed("snell"))
-        self.control.change("stop", "snell")
-        result = self.control.change("start", "snell")
+        self.control.change("autostart-off", "masterdns")
+        self.assertEqual(self.control.status("masterdns")["ActiveState"], "active")
+        self.assertFalse(self.control.allowed("masterdns", enable=True))
+        self.assertTrue(self.control.allowed("masterdns"))
+        self.control.change("stop", "masterdns")
+        result = self.control.change("start", "masterdns")
         self.assertEqual(result["UnitFileState"], "disabled")
         self.assertEqual(result["ActiveState"], "active")
         self.control.reconcile()
-        self.assertEqual(self.control.status("snell")["UnitFileState"], "disabled")
+        self.assertEqual(self.control.status("masterdns")["UnitFileState"], "disabled")
 
     def test_new_units_allowed_but_unknown_or_template_units_rejected(self):
         self.assertTrue(self.control.allowed("masterdns"))
-        self.assertFalse(self.control.allowed("snell6@8"))  # no configured/selected endpoint
         self.assertTrue(all(call[1] == "show" for call in self.systemd.calls))
         self.systemd.calls.clear()
         for unit in ("sshd", "postgresql", "openflux@9", "openflux@", "../snell", "snell;reboot"):
@@ -162,28 +157,28 @@ class ServiceControl(unittest.TestCase):
         self.assertFalse(self.systemd.calls)
 
     def test_existing_administrator_mask_is_never_removed(self):
-        self.systemd.units["snell.service"].update(LoadState="masked", UnitFileState="masked")
+        self.systemd.units["masterdns.service"].update(LoadState="masked", UnitFileState="masked")
         for action in ("on", "start", "restart", "autostart-on"):
             with self.subTest(action=action), self.assertRaisesRegex(ValueError, "mask preserved"):
-                self.control.change(action, "snell")
+                self.control.change(action, "masterdns")
         self.assertFalse(any(call[1] == "unmask" for call in self.systemd.calls))
 
     def test_off_partial_systemd_failure_retains_inhibit_for_retry(self):
         self.systemd.fail_action = "disable"
         with self.assertRaisesRegex(RuntimeError, "injected disable"):
-            self.control.change("off", "snell")
-        self.assertFalse(self.control.allowed("snell"))
-        self.assertEqual(self.control.status("snell")["ActiveState"], "inactive")
+            self.control.change("off", "masterdns")
+        self.assertFalse(self.control.allowed("masterdns"))
+        self.assertEqual(self.control.status("masterdns")["ActiveState"], "inactive")
         self.systemd.fail_action = None
         self.control.reconcile()
-        self.assertEqual(self.control.status("snell")["UnitFileState"], "disabled")
+        self.assertEqual(self.control.status("masterdns")["UnitFileState"], "disabled")
 
     def test_foreign_override_preserved_without_any_lifecycle_write(self):
-        foreign = self.control.dropin("snell.service")
+        foreign = self.control.dropin("masterdns.service")
         foreign.parent.mkdir(parents=True)
         foreign.write_text("# administrator policy\n")
         with self.assertRaisesRegex(ValueError, "foreign contents"):
-            self.control.change("off", "snell")
+            self.control.change("off", "masterdns")
         self.assertEqual(foreign.read_text(), "# administrator policy\n")
         self.assertFalse(self.control.state_path.exists())
 
@@ -191,30 +186,23 @@ class ServiceControl(unittest.TestCase):
         self.control.state_path.parent.mkdir(parents=True)
         self.control.state_path.write_text('{"version":2,"units":{}}')
         with self.assertRaisesRegex(ValueError, "Invalid lifecycle"):
-            self.control.allowed("snell")
+            self.control.allowed("masterdns")
         self.assertFalse(self.systemd.calls)
 
     def test_condition_reset_detected_and_cannot_unblock_existing_off(self):
-        self.control.change("off", "snell")
+        self.control.change("off", "masterdns")
         self.systemd.conditions_removed = True
         with self.assertRaisesRegex(ValueError, "removed lifecycle guard"):
-            self.control.change("on", "snell")
-        self.assertFalse(self.control.allowed("snell"))
-        self.assertEqual(self.control.status("snell")["ActiveState"], "inactive")
+            self.control.change("on", "masterdns")
+        self.assertFalse(self.control.allowed("masterdns"))
+        self.assertEqual(self.control.status("masterdns")["ActiveState"], "inactive")
 
     def test_competing_restart_override_reported_without_reviving_unit(self):
         self.systemd.competing_restart = True
         with self.assertRaisesRegex(ValueError, "supersedes Restart=no"):
-            self.control.change("off", "snell")
-        self.assertFalse(self.control.allowed("snell"))
-        self.assertEqual(self.control.status("snell")["ActiveState"], "inactive")
-
-    def test_timer_inhibit_uses_unit_guard_without_service_directives(self):
-        self.control.change("off", "tuna-healthcheck.timer")
-        data = self.control.dropin("tuna-healthcheck.timer").read_text()
-        self.assertNotIn("[Service]", data)
-        self.assertIn("ConditionPathExists=!/etc/x-manager/service-control/off/tuna-healthcheck.timer", data)
-        self.assertTrue(self.control.allowed("tuna-healthcheck.service"))
+            self.control.change("off", "masterdns")
+        self.assertFalse(self.control.allowed("masterdns"))
+        self.assertEqual(self.control.status("masterdns")["ActiveState"], "inactive")
 
     def test_missing_external_watchdogs_do_not_block_owned_service(self):
         for unit in control.EXTERNAL_WATCHDOGS:
@@ -226,16 +214,11 @@ class ServiceControl(unittest.TestCase):
                              call[2] in control.EXTERNAL_WATCHDOGS
                              for call in self.systemd.calls if call[0] == "systemctl"))
 
-    def test_conflict_report_is_read_only_and_external_units_need_explicit_choice(self):
+    def test_conflict_report_is_read_only(self):
         self.control.reconcile()
         self.assertFalse(self.systemd.calls)
         conflicts = self.control.conflicts()
-        self.assertEqual({s["unit"] for s in conflicts}, set(control.EXTERNAL_WATCHDOGS))
-        self.assertTrue(all(s["conflict"] for s in conflicts))
-        self.assertTrue(all(call[1] == "show" for call in self.systemd.calls))
-        self.control.change("off", "vpn-watchdog")
-        self.assertFalse(self.control.status("tuna-watchdog")["off"])
-        self.assertEqual(self.control.status("sing-box")["ActiveState"], "active")
+        self.assertEqual(conflicts, [])
 
 
 if __name__ == "__main__":

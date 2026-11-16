@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # X-MANAGER: Универсальный инсталлятор шлюзов и прокси-служб
-# Поддерживает: Snell v5 (Hybrid TCP+UDP/QUIC), Mieru (mita), WDTT (qwdtt) + Xray-core
+# Поддерживает: Mieru (mita), WDTT (qwdtt) + Xray-core
 # Репозиторий: https://github.com/lesovoi53/x-manager-lite
 # ==============================================================================
 
@@ -28,11 +28,7 @@ if [ "${1:-}" = --backup ]; then
     xm_finish
     exit
 fi
-if [ "${1:-}" = --recover-watchdog ]; then
-    [ "$#" = 1 ] || xm_die 'Usage: install.sh --recover-watchdog'
-    python3 "$SCRIPT_DIR/scripts/installer-state.py" watchdog-resume
-    exit
-fi
+
 if [ "${1:-}" = --rollback ]; then
     [ "$#" = 2 ] || xm_die 'Usage: install.sh --rollback /var/backups/x-manager-XXXXXXXX'
     for dependency in python3 ip iptables-save iptables-restore ip6tables-save ip6tables-restore; do
@@ -43,7 +39,6 @@ import json,sys
 if json.load(open(sys.argv[1])).get('edition') != 'lite':
     sys.exit('Эта резервная копия не относится к Lite; восстановление отменено.')
 PY
-    xm_check_external_watchdog
     # Validate the requested private snapshot before creating the recovery backup.
     python3 "$SCRIPT_DIR/scripts/installer-state.py" validate "$2"
     xm_begin
@@ -52,13 +47,7 @@ PY
     exit
 fi
 case "${1:-}" in ''|--quick|--update|--direct|--manual|-m|--interactive|-i) ;; *) xm_die 'Unknown option';; esac
-case "${2:-}" in ''|--migrate-legacy-watchdog) ;; *) xm_die 'Unknown second option';; esac
-[ "$#" -le 2 ] || xm_die 'Too many arguments'
-legacy_watchdog=no
-if systemctl is-active --quiet tuna-watchdog.timer || systemctl is-enabled --quiet tuna-watchdog.timer || systemctl is-active --quiet tuna-watchdog.service; then
-    legacy_watchdog=yes
-    [ "${2:-}" = --migrate-legacy-watchdog ] || xm_die 'Legacy watchdog is active. Review migration and use --update --migrate-legacy-watchdog; no installation changes made.'
-fi
+[ "$#" -le 1 ] || xm_die 'Too many arguments'
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -89,7 +78,7 @@ fi
 clear
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║${BOLD}          X-MANAGER LITE: СЕТЕВЫЕ СЛУЖБЫ         ${CYAN}║${NC}"
-echo -e "${CYAN}║${NC}  Snell v5/v6 | Mieru | MasterDNS | TUNA | qWDTT / CSQTT ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  Mieru | MasterDNS | TUNA | qWDTT                ${CYAN}║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -102,7 +91,6 @@ for dependency in curl wget jq unzip iptables iptables-save iptables-restore ope
     command -v "$dependency" >/dev/null || xm_die "Missing dependency: $dependency"
 done
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else "Python 3.9 or newer is required before installation")'
-xm_check_external_watchdog
 external_ports=$(python3 "$SCRIPT_DIR/scripts/external-listener-ports.py")
 eval "$external_ports"
 port_plan=$(python3 "$SCRIPT_DIR/scripts/plan-ports.py")
@@ -110,7 +98,7 @@ eval "$port_plan"
 # Existing service/configuration state is an upgrade even without a manifest.
 # A new X-Manager installation may coexist with a panel; never reset that panel.
 XM_CLEAN_INSTALL=1
-for existing in /usr/local/share/x-manager/components.json /etc/x-manager /etc/snell /etc/snell6 /etc/mita /etc/mieru /etc/tuna-subscriptions /var/lib/tuna-subscriptions; do
+for existing in /usr/local/share/x-manager/components.json /etc/x-manager /etc/mita /etc/mieru /etc/tuna-subscriptions /var/lib/tuna-subscriptions; do
     if [ -e "$existing" ] || [ -L "$existing" ]; then XM_CLEAN_INSTALL=0; break; fi
 done
 if [ "$XM_CLEAN_INSTALL" = 1 ]; then
@@ -127,7 +115,7 @@ WORK_DIR=$(mktemp -d)
 # Архитектура и сетевой интерфейс
 ARCH=$(uname -m)
 case "$ARCH" in
-    x86_64) SNELL_ARCH="linux-amd64"; MIERU_ARCH="linux-amd64" ;;
+    x86_64) MIERU_ARCH="linux-amd64" ;;
     *) echo -e "${RED}Неподдерживаемая архитектура: $ARCH${NC}"; exit 1 ;;
 esac
 
@@ -156,10 +144,6 @@ else
 fi
 
 # Значения по умолчанию
-INSTALL_SNELL="yes"
-SNELL_PSK=$(openssl rand -hex 15)
-SNELL_OBFS="off"
-
 INSTALL_MIERU="yes"
 MIERU_USER="ADMIN"
 MIERU_PASS="mita_pass_$(openssl rand -hex 4)"
@@ -173,16 +157,6 @@ DEFAULT_ROUTING="${DEFAULT_ROUTING:-xray}"
 if [ "$MODE" = "manual" ]; then
     echo ""
     echo -e "${BOLD}--- Настройка компонентов установки ---${NC}"
-
-    # Snell
-    read -p "Установить Snell v5 (Hybrid TCP + UDP/QUIC)? [Y/n]: " s_ans
-    [ "$s_ans" = "n" ] || [ "$s_ans" = "N" ] && INSTALL_SNELL="no"
-    if [ "$INSTALL_SNELL" = "yes" ]; then
-        read -p "Порт для Snell v5 [1-65535, по умолчанию 1488]: " custom_s_port
-        [ -n "$custom_s_port" ] && SNELL_PORT="$custom_s_port"
-        read -p "PSK ключ Snell [Enter для случайного]: " custom_s_psk
-        [ -n "$custom_s_psk" ] && SNELL_PSK="$custom_s_psk"
-    fi
 
     # Mieru
     echo ""
@@ -215,7 +189,6 @@ if [ "$DEFAULT_ROUTING" = xray ] && [ ! -f /etc/x-ui/x-ui.db ]; then
 fi
 # Stage and verify the complete selected component set before managed changes.
 asset() { python3 "$SCRIPT_DIR/scripts/release-assets.py" "$1" "$WORK_DIR/$2"; }
-[ "$INSTALL_SNELL" != yes ] || asset 'snell-{arch}.zip' snell-package.zip
 [ "$INSTALL_MIERU" != yes ] || asset 'mita-{arch}.deb' mita.deb
 UPDATE_MASTERDNS=no
 if [ -f /etc/masterdns/server_config.toml ]; then
@@ -231,9 +204,6 @@ if [ "$XM_CLEAN_INSTALL" = 1 ]; then
     python3 "$SCRIPT_DIR/scripts/network-profile.py" apply --adaptive --human
 else
     echo 'Повторная установка: сетевой профиль и ручные настройки сохраняются.'
-fi
-if [ "$legacy_watchdog" = yes ]; then
-    XM_WATCHDOG_TRANSACTION=1 python3 "$SCRIPT_DIR/scripts/tuna-watchdog.py" retire-legacy --attempts 5 --delay 30
 fi
 echo -e "${CYAN}==> Шаг 2: Анализ и настройка шлюзов ядра Xray (панель / standalone / заданные шлюзы)...${NC}"
 mkdir -p /etc/x-manager
@@ -321,81 +291,7 @@ xm_open_component_port() {
     iptables -C INPUT -p "$protocol" --dport "$port" -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p "$protocol" --dport "$port" -j ACCEPT
 }
 
-# Установка Snell v5.0.1
-if [ "$INSTALL_SNELL" = "yes" ]; then
-    echo -e "${CYAN}==> Шаг 3: Установка и настройка Snell v5.0.1 (Hybrid TCP + UDP/QUIC)...${NC}"
-    id -u snell &>/dev/null || useradd -r -s /usr/sbin/nologin snell
-    # New configuration directories must remain traversable under umask 077.
-    [ -d /etc/snell ] || install -d -m 0755 /etc/snell
-    mkdir -p /usr/local/bin
 
-    tmp_snell="$WORK_DIR/snell.zip"
-    cp "$WORK_DIR/snell-package.zip" "$tmp_snell"
-    unzip -tq "$tmp_snell"
-    mkdir "$WORK_DIR/snell"
-    unzip -q "$tmp_snell" -d "$WORK_DIR/snell"
-    install -m 0755 "$WORK_DIR/snell/snell-server" /usr/local/bin/snell-server.new
-    mv -f /usr/local/bin/snell-server.new /usr/local/bin/snell-server
-
-    # Конфигурация Snell
-    SNELL_NEW_CONFIG=no
-    if [ ! -f "/etc/snell/snell-server.conf" ]; then
-        cat << EOF > /etc/snell/snell-server.conf
-[snell-server]
-listen = 0.0.0.0:${SNELL_PORT}
-ipv6 = false
-psk = ${SNELL_PSK}
-obfs = ${SNELL_OBFS}
-EOF
-        SNELL_NEW_CONFIG=yes
-        chown snell:snell /etc/snell/snell-server.conf
-        chmod 640 /etc/snell/snell-server.conf
-    fi
-
-    [ -f /etc/snell/tag.txt ] || echo "Snell-v5" > /etc/snell/tag.txt
-    [ -f /etc/snell/routing.mode ] || echo "$DEFAULT_ROUTING" > /etc/snell/routing.mode
-    # Keep existing ownership, including root-owned private routing state.
-    SNELL_PORT=$(sed -nE 's/^listen[[:space:]]*=[[:space:]]*.*:([0-9]+)$/\1/p' /etc/snell/snell-server.conf)
-    [[ "$SNELL_PORT" =~ ^[0-9]+$ ]] || xm_die "Invalid Snell listen port"
-
-    # TCP REDIRECT and UDP policy-routing/TPROXY helpers must precede ExecStartPre.
-    install -d -m 0755 /usr/local/share/x-manager/scripts
-    xm_install_asset scripts/snell-routing.py /usr/local/share/x-manager/scripts/snell-routing.py 0644
-    xm_install_asset scripts/xray-discovery.py /usr/local/share/x-manager/scripts/xray-discovery.py 0644
-
-    xm_install_asset scripts/snell-routing.sh /usr/local/bin/snell-routing.sh 0755
-    chmod +x /usr/local/bin/snell-routing.sh
-
-    # Служба snell.service
-    xm_write_unit /etc/systemd/system/snell.service << 'EOF'
-[Unit]
-Description=Snell Proxy Service
-After=network.target network-online.target x-ui.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=snell
-Group=snell
-LimitNOFILE=65535
-ExecStartPre=+/usr/local/bin/snell-routing.sh
-ExecStart=/usr/local/bin/snell-server -c /etc/snell/snell-server.conf
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Открытие TCP и UDP в iptables для Snell
-    xm_open_component_port "$SNELL_NEW_CONFIG" tcp "$SNELL_PORT"
-    xm_open_component_port "$SNELL_NEW_CONFIG" udp "$SNELL_PORT"
-
-    systemctl daemon-reload
-    xm_enable snell
-    xm_service snell
-    echo -e "  ✓ Snell v5.0.1 настроен на порту ${SNELL_PORT}; состояние запуска проверено/сохранено"
-fi
 
 # Установка Mieru
 if [ "$INSTALL_MIERU" = "yes" ]; then
@@ -622,29 +518,18 @@ echo -e "${CYAN}==> Шаг 9: Развертывание диспетчера x-
 xm_install_asset bin/x-manager /usr/local/bin/x-manager 0755
 install -d -m 0755 /usr/local/share/x-manager /usr/local/share/x-manager/patches /usr/local/share/x-manager/scripts
 
-install -m 0644 "$SCRIPT_DIR/scripts/"{snell-routing.py,snell-subscriptions.py,mieru-subscriptions.py,xray_gateways.py,tuna-watchdog.py,plan-ports.py,release-assets.py,update-release.sh,xray-discovery.py,menu-v2.sh} /usr/local/share/x-manager/scripts/
+install -m 0644 "$SCRIPT_DIR/scripts/"{mieru-subscriptions.py,xray_gateways.py,plan-ports.py,release-assets.py,update-release.sh,xray-discovery.py,menu-v2.sh} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/components.json" /usr/local/share/x-manager/components.json
 install -m 0644 "$SCRIPT_DIR/scripts/menu-actions.tsv" /usr/local/share/x-manager/scripts/
-install -m 0644 "$SCRIPT_DIR/scripts/"{lite-edition.py,tcp-profile.py,menu-lite.sh,supported-platform.py} /usr/local/share/x-manager/scripts/
+install -m 0644 "$SCRIPT_DIR/scripts/"{lite-edition.py,menu-lite.sh,supported-platform.py} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/installer-state.py" /usr/local/share/x-manager/scripts/
-install -m 0644 "$SCRIPT_DIR/scripts/"{service-control.py,network-diagnostics.py,network-profile.py,watchdog-health.py,snell6-endpoints.py,snell-switch.py} /usr/local/share/x-manager/scripts/
+install -m 0644 "$SCRIPT_DIR/scripts/"{service-control.py,network-diagnostics.py,network-profile.py} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/"{masterdns-domains.py,masterdns-link-profiles.py} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/reboot-schedule.py" /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/"{firewall-adapter.py,firewall-common.sh} /usr/local/share/x-manager/scripts/
 install -m 0644 "$SCRIPT_DIR/scripts/tuna-recovery.py" /usr/local/share/x-manager/scripts/
-# Capture prior timer existence: upgrades preserve an existing disabled timer.
-health_bootstrap_args=()
-if [ "$(systemctl show tuna-healthcheck.timer -p LoadState --value)" = not-found ]; then
-    health_bootstrap_args+=(--new-timer)
-fi
-# Deliver the units; no Snell endpoint is implicitly created.
-# Existing administrator masks and lifecycle intent remain authoritative.
-xm_install_asset systemd/tuna-healthcheck.service /etc/systemd/system/tuna-healthcheck.service 0644
-xm_install_asset systemd/tuna-healthcheck.timer /etc/systemd/system/tuna-healthcheck.timer 0644
-xm_install_asset systemd/tuna-recovery.service /etc/systemd/system/tuna-recovery.service 0644
-xm_install_asset systemd/tuna-recovery.timer /etc/systemd/system/tuna-recovery.timer 0644
+
 xm_install_asset systemd/x-manager-reboot.service /etc/systemd/system/x-manager-reboot.service 0644
-xm_install_asset systemd/snell6@.service /etc/systemd/system/snell6@.service 0644
 systemctl daemon-reload
 # Reconcile also migrates old inhibit-directory traversal permissions for TUNA.
 python3 /usr/local/share/x-manager/scripts/service-control.py reconcile
@@ -652,13 +537,11 @@ python3 /usr/local/share/x-manager/scripts/reboot-schedule.py bootstrap --human
 if [ "$XM_CLEAN_INSTALL" = 1 ] && [ -n "${XM_REBOOT_TIME:-}" ]; then
     python3 /usr/local/share/x-manager/scripts/reboot-schedule.py configure --time "$XM_REBOOT_TIME" --timezone "${XM_REBOOT_TIMEZONE:-Europe/Moscow}"
 fi
-echo -e "  -> Создание системных алиасов (x-snell, x-mieru, x-wdtt, x-csqtt, x-dns, x-ssl, x-fw)..."
+echo -e "  -> Создание системных алиасов (x-mieru, x-wdtt, x-dns, x-ssl, x-fw)..."
 ln -sf /usr/local/bin/x-manager /usr/local/bin/x-manager-lite
-ln -sf /usr/local/bin/x-manager /usr/local/bin/x-snell
 ln -sf /usr/local/bin/x-manager /usr/local/bin/x-mieru
 ln -sf /usr/local/bin/x-manager /usr/local/bin/x-wdtt
 ln -sf /usr/local/bin/x-manager /usr/local/bin/x-qwdtt
-ln -sf /usr/local/bin/x-manager /usr/local/bin/x-csqtt
 ln -sf /usr/local/bin/x-manager /usr/local/bin/x-dns
 ln -sf /usr/local/bin/x-manager /usr/local/bin/x-masterdns
 ln -sf /usr/local/bin/x-manager /usr/local/bin/x-ssl
@@ -671,9 +554,7 @@ echo -e "  ✓ Диспетчер x-manager успешно развернут"
 
 echo -e "${CYAN}==> Шаг 10: Развертывание сервера подписок TUNA (tuna-subscriptions)...${NC}"
 XM_PARENT_TRANSACTION=1 XM_PARENT_BACKUP="$XM_BACKUP" bash "$SCRIPT_DIR/tuna-sub-server/install-sub-server.sh"
-if [ -f /etc/snell/snell-server.conf ]; then
-    python3 /usr/local/share/x-manager/scripts/snell-subscriptions.py sync --server-ip "$SERVER_IP"
-fi
+
 # Keep the full verified source for repeat installation and manual rollback.
 # This directory is included in installer-state.py's managed backup scope.
 distribution=/usr/local/share/x-manager/distribution
@@ -689,12 +570,6 @@ for unit, previous in json.load(open(sys.argv[1]))['services'].items():
     if previous['enabled'] == 'disabled':
         subprocess.run(['systemctl', 'disable', unit], check=True)
 PY
-# Complete within the installer backup transaction. Existing custom policies win.
-XM_WATCHDOG_TRANSACTION=1 python3 /usr/local/share/x-manager/scripts/tuna-watchdog.py migrate-auto-reset
-python3 /usr/local/share/x-manager/scripts/tuna-watchdog.py defaults --attempts 5 --delay 5
-xm_enable tuna-recovery.timer
-xm_service tuna-recovery.timer
-python3 /usr/local/share/x-manager/scripts/watchdog-health.py bootstrap --install-lock-fd 9 "${health_bootstrap_args[@]}" --human
 xm_finish
 rm -rf -- "$WORK_DIR"
 echo "Rollback: bash /usr/local/share/x-manager/distribution/install.sh --rollback $XM_BACKUP"
@@ -707,14 +582,13 @@ echo ""
 echo -e "${BOLD}Для входа в интерактивное меню запустите:${NC}"
 echo -e "  ${CYAN}${BOLD}x-manager${NC}   - Главный центр управления всеми службами"
 echo -e "  ${PURPLE}${BOLD}x-sub${NC}       - Раздел управления сервером подписок TUNA (tuna-subscriptions)"
-echo -e "  ${YELLOW}x-snell${NC}     - Раздел управления Snell v5"
 echo -e "  ${YELLOW}x-mieru${NC}     - Раздел управления Mieru"
 echo -e "  ${YELLOW}x-wdtt${NC}      - Раздел управления WDTT (qwdtt)"
-echo -e "  ${YELLOW}x-csqtt${NC}     - Раздел управления CSQTT (VPN & Защита веб-панели)"
 echo -e "  ${YELLOW}x-dns${NC}       - Раздел управления DNS-туннелями (MasterDnsVPN)"
 echo -e "  ${RED}x-fw${NC}        - Центр управления фаерволом портов (отключение протоколов)"
 echo ""
 echo -e "${BOLD}Шлюзы ядра Xray (подхваченные/настроенные):${NC}"
+
 echo -e "  • TPROXY:   127.0.0.1:${XRAY_TPROXY_PORT}"
 echo -e "  • REDIRECT: 127.0.0.1:${XRAY_REDIRECT_PORT}"
 echo -e "  • SOCKS5:   127.0.0.1:${XRAY_SOCKS_PORT}"

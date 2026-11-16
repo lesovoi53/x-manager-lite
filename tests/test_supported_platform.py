@@ -29,5 +29,4 @@ class SupportedPlatform(unittest.TestCase):
 
     def test_both_entrypoints_use_shared_gate(self):
         self.assertIn('scripts/supported-platform.py', (ROOT/'scripts/installer-common.sh').read_text())
-        self.assertIn("load_helper('supported-platform').check()", (ROOT/'scripts/snell6-endpoints.py').read_text())
         self.assertIn('menu-lite.sh,supported-platform.py}', (ROOT/'install.sh').read_text())

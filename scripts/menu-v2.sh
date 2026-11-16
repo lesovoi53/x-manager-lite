@@ -2,9 +2,9 @@
 # Presentation/navigation only. Opening a page must never change the firewall.
 xm_service_menu_unit() {
     case "$1" in
-        menu_mieru) echo mita.service;; menu_snell) echo snell.service;;
+        menu_mieru) echo mita.service;;
         menu_subscriptions) echo tuna-subscriptions.service;; menu_dns) echo masterdns.service;;
-        menu_wdtt) echo wdtt.service;; menu_csqtt) echo csqtt.service;;
+        menu_wdtt) echo wdtt.service;;
         *) return 1;;
     esac
 }
@@ -15,11 +15,6 @@ xm_direct_service_action() {
         [ "$unit" != fail2ban.service ] || warning+=' Это отключит защиту от перебора паролей.'
         xm_confirm "$warning" || return 0;; *) return 1;;
     esac
-    if [ "$action" = on ] && [ "$unit" = snell.service ]; then
-        xm_confirm 'Активировать Snell v5 вместо v6? При ошибке прежнее состояние будет восстановлено.' || return 0
-        python3 "$(dirname "${BASH_SOURCE[0]}")/snell-switch.py" switch --version 5 || { echo 'Переключение не выполнено.' >&2; return 1; }
-        return 0
-    fi
     python3 "$(dirname "${BASH_SOURCE[0]}")/service-control.py" "$action" "$unit" || {
         echo 'Операция не завершена; проверьте ошибку выше.' >&2; xm_pause; return 1;
     }
@@ -55,13 +50,9 @@ xm_choose_action() {
     done < "$xm_file"
     xm_title=$(awk -F'|' -v n="$xm_name" '$1==n {print $2; exit}' "$xm_file")
     while true; do
-        [ "$xm_name" != menu_snell ] || xm_title='Snell v5'
         xm_header "$xm_title"
         case "$xm_name" in
             menu_mieru) printf '  Служба: %b\n' "$(get_mieru_status)";;
-            menu_snell) printf '  Служба Snell v5: %b\n' "$(get_snell_status)"
-                printf '  Snell v6: настройки находятся в разделе Snell → [2].\n'
-                printf '  Кнопки включения и постоянного отключения находятся ниже.\n';;
             menu_subscriptions) printf '  Служба: %b\n  Внешние ссылки добавляются в подписку пользователя.\n' "$(get_sub_server_status)";;
         esac
         for xm_pick in "${!xm_sections[@]}"; do printf '  [%d] %s\n' "$((xm_pick+1))" "${xm_sections[xm_pick]}"; done
@@ -77,7 +68,7 @@ xm_choose_action() {
             [ "$xm_row" = "$xm_name" ] && [ "$xm_section" = "$xm_group" ] || continue
             xm_ids+=("$xm_action"); xm_labels+=("$xm_label")
         done < "$xm_file"
-        if [ "$xm_name" = menu_snell ]; then xm_header "Snell v5 / $xm_group"; else xm_header "$xm_group"; fi
+        xm_header "$xm_group"
         for xm_pick in "${!xm_ids[@]}"; do printf '  [%d] %s\n' "$((xm_pick+1))" "${xm_labels[xm_pick]}"; done
         xm_print_service_controls "$xm_name"
         echo '  [0] Назад'
@@ -111,49 +102,16 @@ xm_release_update() {
         return 1
     fi
 }
-xm_snell6_status() {
-    local status
-    if status=$(python3 "$(dirname "${BASH_SOURCE[0]}")/snell6-endpoints.py" status --human); then
-        printf '%s' "$status"
-    else
-        printf '%s' 'НЕ УДАЛОСЬ ПРОВЕРИТЬ'
-    fi
-}
-xm_snell_menu() {
-    local choice
-    while true; do
-        xm_header 'Snell — версия сервера'
-        printf '  [1] Snell v5   %b\n' "$(get_snell_status)"
-        printf '  [2] Snell v6   %s\n' "$(xm_snell6_status)"
-        printf '  Выбор открывает настройки. Одновременно активна одна версия.\n'
-        printf '  Включение и постоянное отключение — в настройках выбранной реализации.\n'
-        printf '  [0] Назад\n'
-        read -r -p 'Реализация: ' choice || return
-        case "$choice" in
-            1) menu_snell;;
-            2) python3 "$(dirname "${BASH_SOURCE[0]}")/snell6-endpoints.py" menu || { echo 'Операция Snell v6 не завершена; проверьте ошибку выше.' >&2; xm_pause; };;
-            0) return;; *) echo 'Выберите номер из списка';;
-        esac
-    done
-}
 xm_services_menu() {
     local choice
     while true; do
         xm_header 'Службы и туннели'
-        printf '  [1] Snell v5: %b | v6: %s
-' "$(get_snell_status)" "$(xm_snell6_status)"
-        printf '  [2] Mieru        %b
-  [3] MasterDNS    %b
-  [4] qWDTT        %b
-  [5] CSQTT        %b
-' "$(get_mieru_status)" "$(get_dns_status)" "$(get_wdtt_status)" "$(get_csqtt_status)"
-        printf '  [6] Включение, выключение и автозапуск
-  [0] Назад
-'
+        printf '  [1] Mieru        %b\n  [2] MasterDNS    %b\n  [3] qWDTT        %b\n' "$(get_mieru_status)" "$(get_dns_status)" "$(get_wdtt_status)"
+        printf '  [4] Включение, выключение и автозапуск\n  [0] Назад\n'
         read -r -p 'Служба: ' choice || return
         case "$choice" in
-            1) xm_snell_menu;; 2) menu_mieru;; 3) menu_dns;; 4) menu_wdtt;; 5) menu_csqtt;;
-            6) python3 "$(dirname "${BASH_SOURCE[0]}")/service-control.py" menu;;
+            1) menu_mieru;; 2) menu_dns;; 3) menu_wdtt;;
+            4) python3 "$(dirname "${BASH_SOURCE[0]}")/service-control.py" menu;;
             0) return;; *) echo 'Выберите номер из списка.';;
         esac
     done
@@ -192,9 +150,9 @@ xm_security_menu() {
     local choice
     while true; do
         xm_header 'Сеть и безопасность'
-        printf '  [1] Фаервол и доступ к портам\n  [2] SSL-сертификаты\n  [3] DNS системы / BBR / Swap / Fail2ban\n  [4] Управляемый профиль BBR/fq с откатом\n  [0] Назад\n'
+        printf '  [1] Фаервол и доступ к портам\n  [2] SSL-сертификаты\n  [3] Сеть и оптимизация (BBR/fq, DNS)\n  [0] Назад\n'
         read -r -p 'Раздел: ' choice || return
-        case "$choice" in 1) menu_firewall;; 2) menu_ssl;; 3) menu_system_opt;; 4) xm_network_profile_menu;; 0) return;; *) echo 'Неверный выбор';; esac
+        case "$choice" in 1) menu_firewall;; 2) menu_ssl;; 3) xm_lite_network_menu;; 0) return;; *) echo 'Неверный выбор';; esac
     done
 }
 xm_network_has_snapshot() {
@@ -231,124 +189,16 @@ xm_diagnostics_menu() {
     helper_dir=$(dirname "${BASH_SOURCE[0]}")
     while true; do
         xm_header 'Диагностика'
-        printf '  [1] Состояние служб
-  [2] Сеть и система
-  [3] Конфликты watchdog
-  [4] Watchdog — восстановление
-  [0] Назад
-'
+        printf '  [1] Состояние служб\n  [2] Сеть и система\n  [0] Назад\n'
         read -r -p 'Действие: ' choice || return
         case "$choice" in
             1) view_global_status;;
             2) python3 "$helper_dir/network-diagnostics.py"; xm_pause;;
-            3) python3 "$helper_dir/service-control.py" conflicts --human; xm_pause;;
-            4) xm_watchdog_menu;; 0) return;;
-        esac
-    done
-}
-xm_watchdog_menu() {
-    local choice script_dir
-    script_dir=$(dirname "${BASH_SOURCE[0]}")
-    while true; do
-        xm_header 'Watchdog — восстановление служб'
-        echo 'Падение процесса: systemd. Проверка работающей службы: локальный контроль.'
-        echo 'Постоянное отключение и ручной стоп сохраняются. Чужой watchdog автоматически не отключается.'
-        printf '  [1] Службы: действующие политики и настройка лимитов\n  [2] Проверки работающих служб: состояние и остаток попыток\n  [3] Применить базовую защиту для ещё не настроенных служб\n  [4] Дополнительные локальные проверки\n  [5] Конфликты с другим watchdog\n  [0] Назад\n'
-        read -r -p 'Действие: ' choice || return
-        case "$choice" in
-            1) python3 "$script_dir/tuna-watchdog.py" menu || echo 'Не удалось открыть настройки watchdog.' >&2;;
-            2) python3 "$script_dir/watchdog-health.py" report --human; xm_pause;;
-            3)
-                xm_confirm 'Применить базовую защиту: 5 попыток с паузой 5 с, для Xray 30 с; после исчерпания сброс через 5 минут? Работающие службы не перезапускаются.' || continue
-                if python3 "$script_dir/tuna-watchdog.py" defaults --attempts 5 --delay 5; then
-                    python3 "$script_dir/watchdog-health.py" bootstrap --enable-timer --human || echo 'Контроль Xray не настроен; см. ошибку выше. Политики аварийного перезапуска применены.' >&2
-                else
-                    echo 'Базовые политики не применены; см. ошибку выше.' >&2
-                fi
-                xm_pause;;
-            4) xm_health_menu;;
-            5) python3 "$script_dir/service-control.py" conflicts --human; xm_pause;;
             0) return;;
-            *) echo 'Выберите номер из списка';;
+            *) echo 'Выберите номер из списка.';;
         esac
     done
 }
-xm_health_configure() {
-    local helper=$1 unit kind_pick kind host_pick host port path failures cooldown attempts default_cooldown=5
-    local -a args=()
-    echo 'Укажите имя установленной службы, например xray, snell или mita.'
-    read -r -p 'Служба: ' unit || return 1
-    [ -n "$unit" ] || { echo 'Имя службы не задано.' >&2; return 1; }
-    printf '  [1] Только наличие процесса\n  [2] TCP-слушатель на loopback\n  [3] Локальный HTTP с ответом 2xx\n'
-    read -r -p 'Проверка [Enter=1]: ' kind_pick || return 1
-    case "${kind_pick:-1}" in
-        1) kind=process;; 2) kind=tcp;; 3) kind=http;;
-        *) echo 'Нужен номер 1–3.' >&2; return 1;;
-    esac
-    args=(set "$unit" --kind "$kind")
-    if [ "$kind" != process ]; then
-        read -r -p 'Loopback: [1] 127.0.0.1, [2] ::1 [Enter=1]: ' host_pick || return 1
-        case "${host_pick:-1}" in 1) host=127.0.0.1;; 2) host=::1;; *) echo 'Нужен номер 1 или 2.' >&2; return 1;; esac
-        read -r -p 'Локальный порт этой службы: ' port || return 1
-        args+=(--host "$host" --port "$port")
-        if [ "$kind" = http ]; then
-            read -r -p 'HTTP-путь без query/секретов [Enter=/]: ' path || return 1
-            args+=(--path "${path:-/}")
-        fi
-    fi
-    read -r -p 'Последовательных ошибок до действия [Enter=3]: ' failures || return 1
-    case "$unit" in x-ui|xray|x-ui.service|xray.service) default_cooldown=30;; esac
-    read -r -p "Пауза между попытками, секунд [Enter=$default_cooldown]: " cooldown || return 1
-    read -r -p 'Перезапусков за цикл; 0 — наблюдение [Enter=5]: ' attempts || return 1
-    args+=(--failures "${failures:-3}" --cooldown "${cooldown:-$default_cooldown}" --max-restarts "${attempts:-5}")
-    printf 'Служба: %s; проверка: %s; ошибок: %s; пауза: %s с; попыток: %s.\n' "$unit" "$kind" "${failures:-3}" "${cooldown:-$default_cooldown}" "${attempts:-5}"
-    echo 'После исчерпания попыток — пауза 5 минут, затем новый цикл восстановления.'
-    [ "$kind" = process ] || printf 'Локальная цель: %s:%s%s\n' "$host" "$port" "${path:-}"
-    echo 'Настройка сохраняет проверку. Таймер включается отдельным пунктом; существующий лимит попыток не сбрасывается.'
-    xm_confirm 'Сохранить эту проверку?' || return 0
-    python3 "$helper" "${args[@]}" --human
-}
-xm_health_menu() {
-    local choice unit script_dir status
-    script_dir=$(dirname "${BASH_SOURCE[0]}")
-    while true; do
-        xm_header 'Локальные проверки зависаний'
-        echo 'Проверка зависаний активных служб. Остановленные службы не запускаются.'
-        echo 'Начните с [1]: состояние таймера, выбранные службы и лимиты. Настройка — [2].'
-        printf '  [1] Отчёт, проверки и остаток попыток\n  [2] Добавить или изменить проверку\n  [3] Удалить проверку службы\n  [4] Сбросить попытки после устранения причины\n  [5] Включить таймер проверок\n  [6] Выключить таймер проверок\n  [7] Проверить сейчас (возможен перезапуск)\n  [0] Назад\n'
-        read -r -p 'Действие: ' choice || return
-        status=0
-        case "$choice" in
-            1) python3 "$script_dir/watchdog-health.py" report --human || status=$?;;
-            2) xm_health_configure "$script_dir/watchdog-health.py" || status=$?;;
-            3|4)
-                read -r -p 'Имя службы: ' unit || return
-                if [ "$choice" = 3 ]; then
-                    xm_confirm 'Удалить только проверку этой службы?' || continue
-                    python3 "$script_dir/watchdog-health.py" remove "$unit" --human || status=$?
-                else
-                    xm_confirm 'Причина устранена? Сброс разрешит новые попытки перезапуска.' || continue
-                    python3 "$script_dir/watchdog-health.py" reset "$unit" --human || status=$?
-                fi;;
-            5)
-                python3 "$script_dir/watchdog-health.py" report --human --require-configured || { xm_pause; continue; }
-                xm_confirm 'Включить таймер? Сохранённые проверки смогут перезапускать службы в пределах своих лимитов.' || continue
-                python3 "$script_dir/service-control.py" on tuna-healthcheck.timer || status=$?;;
-            6)
-                xm_confirm 'Прекратить новые плановые проверки и выключить автозапуск таймера?' || continue
-                python3 "$script_dir/service-control.py" off tuna-healthcheck.timer || status=$?;;
-            7)
-                python3 "$script_dir/watchdog-health.py" report --human --require-configured || { xm_pause; continue; }
-                xm_confirm 'Выполнить проверки сейчас с разрешёнными для них попытками перезапуска?' || continue
-                python3 "$script_dir/watchdog-health.py" check --human || status=$?;;
-            0) return;;
-            *) echo 'Выберите номер из списка'; continue;;
-        esac
-        [ "$status" = 0 ] || echo 'Операция проверки служб не завершена; ошибка показана выше.' >&2
-        xm_pause
-    done
-}
-
 xm_backup_menu() {
     local choice backup
     local -a backups=()
@@ -398,14 +248,13 @@ xm_maintenance_menu() {
     local choice
     while true; do
         xm_header 'Обслуживание'
-        printf '  [1] Обновить выпуск Lite\n  [2] Восстановить резервную копию\n  [3] Пересканировать и подхватить службы\n  [4] Перезапустить службы пакета\n  [5] Watchdog — восстановление служб\n  [6] Ежедневная перезагрузка VPS\n  [0] Назад\n'
+        printf '  [1] Обновить выпуск Lite\n  [2] Восстановить резервную копию\n  [3] Пересканировать и подхватить службы\n  [4] Перезапустить службы пакета\n  [5] Ежедневная перезагрузка VPS\n  [0] Назад\n'
         read -r -p 'Действие: ' choice || return
         case "$choice" in
             1) xm_release_update;; 2) xm_backup_menu;;
             3) xm_confirm 'Подхватить обнаруженные службы? Это может обновить служебные настройки.' && rescan_and_adopt_protocols;;
             4) xm_confirm 'Перезапуск прервёт текущие подключения.' && restart_all_services;;
-            5) xm_watchdog_menu;;
-            6) xm_reboot_menu;;
+            5) xm_reboot_menu;;
             0) return;; *) echo 'Неверный выбор';;
         esac
     done

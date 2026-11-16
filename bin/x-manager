@@ -76,7 +76,7 @@ is_mieru_installed() {
 }
 
 is_snell_installed() {
-    command -v snell-server >/dev/null 2>&1 || [ -f "$SNELL_CONFIG_FILE" ] || [ -f "/etc/systemd/system/snell.service" ]
+    return 1
 }
 
 is_wdtt_installed() {
@@ -84,7 +84,7 @@ is_wdtt_installed() {
 }
 
 is_csqtt_installed() {
-    command -v csqtt >/dev/null 2>&1 || [ -f "$CSQTT_SERVICE_FILE" ] || [ -d "$CSQTT_DIR" ]
+    return 1
 }
 
 
@@ -648,9 +648,7 @@ lock_all_protocols_fw() {
     echo ""
     echo -e "${RED}${BOLD}ВНИМАНИЕ: Блокировка портов всех протоколов в фаерволе (Panic Mode)...${NC}"
     is_mieru_installed && ! is_mieru_fw_blocked && toggle_mieru_fw
-    is_snell_installed && ! is_snell_fw_blocked && toggle_snell_fw
     is_wdtt_installed && ! is_wdtt_fw_blocked && toggle_wdtt_fw
-    is_csqtt_installed && ! is_csqtt_tunnel_blocked && toggle_csqtt_tunnel_fw
     is_dns_installed && ! is_dns_wan_blocked && toggle_dns_wan
     echo -e "${RED}${BOLD}✓ Все протоколы успешно заблокированы в фаерволе (порты закрыты)!${NC}"
     sleep 2
@@ -660,22 +658,13 @@ unlock_all_protocols_fw() {
     echo ""
     echo -e "${GREEN}${BOLD}Открытие портов всех установленных протоколов в фаерволе...${NC}"
     is_mieru_installed && is_mieru_fw_blocked && toggle_mieru_fw
-    is_snell_installed && is_snell_fw_blocked && toggle_snell_fw
     is_wdtt_installed && is_wdtt_fw_blocked && toggle_wdtt_fw
-    is_csqtt_installed && is_csqtt_tunnel_blocked && toggle_csqtt_tunnel_fw
     is_dns_installed && is_dns_wan_blocked && toggle_dns_wan
     echo -e "${GREEN}${BOLD}✓ Все протоколы успешно разблокированы в фаерволе (порты открыты)!${NC}"
     sleep 2
 }
 
 sync_active_firewall_rules() {
-    if is_snell_installed && ! is_snell_fw_blocked; then
-        local sp=$(get_snell_port)
-        [ -n "$sp" ] && {
-            iptables -C INPUT -p tcp --dport "$sp" -m comment --comment "SNELL_MANAGED" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$sp" -m comment --comment "SNELL_MANAGED" -j ACCEPT
-            iptables -C INPUT -p udp --dport "$sp" -m comment --comment "SNELL_MANAGED" -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport "$sp" -m comment --comment "SNELL_MANAGED" -j ACCEPT
-        }
-    fi
     if is_mieru_installed && ! is_mieru_fw_blocked; then
         local mp_str=$(get_mieru_ports)
         local mp_val=$(echo "$mp_str" | cut -d'/' -f1)
@@ -695,11 +684,6 @@ sync_active_firewall_rules() {
         iptables -C INPUT -p udp --dport 56002 -m comment --comment "WDTT_MANAGED" -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 56002 -m comment --comment "WDTT_MANAGED" -j ACCEPT
         iptables -C INPUT -p udp --dport 56003 -m comment --comment "WDTT_MANAGED" -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 56003 -m comment --comment "WDTT_MANAGED" -j ACCEPT
     fi
-    if is_csqtt_installed && ! is_csqtt_tunnel_blocked; then
-        local cp=$(get_csqtt_peer_port)
-        [ -z "$cp" ] && cp="37000"
-        iptables -C INPUT -p udp --dport "$cp" -m comment --comment "CSQTT_MANAGED" -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport "$cp" -m comment --comment "CSQTT_MANAGED" -j ACCEPT
-    fi
 }
 
 menu_firewall() {
@@ -714,15 +698,8 @@ menu_firewall() {
         if is_mieru_installed; then
             echo -e "${CYAN}║${NC}  [1] 🚀 Mieru (mita):         $(get_mieru_fw_status) [$(get_mieru_ports)]"
         fi
-        if is_snell_installed; then
-            echo -e "${CYAN}║${NC}  [2] ⚡ Snell v5:             $(get_snell_fw_status) [$(get_snell_port)/TCP+UDP]"
-        fi
         if is_wdtt_installed; then
             echo -e "${CYAN}║${NC}  [3] 🛡️ WDTT / qwdtt:         $(get_wdtt_fw_status) [$(get_wdtt_peer_port)/UDP]"
-        fi
-        if is_csqtt_installed; then
-            echo -e "${CYAN}║${NC}  [4] 🔒 CSQTT (VPN-туннель):   $(get_csqtt_tunnel_status) [$(get_csqtt_peer_port)/UDP]"
-            echo -e "${CYAN}║${NC}  [5] 🌐 CSQTT (Веб-панель):   $(get_csqtt_protect_status) [$(get_csqtt_web_port)/TCP]"
         fi
         if is_dns_installed; then
             echo -e "${CYAN}║${NC}  [6] 🌐 DNS-туннель:          $(get_dns_wan_status) [:53 UDP/TCP]"
@@ -731,12 +708,7 @@ menu_firewall() {
         echo ""
         echo -e "  ${BOLD}--- Переключение отдельных протоколов ---${NC}"
         is_mieru_installed && echo -e "  ${YELLOW}[1]${NC} 🚀 Переключить фаервол Mieru"
-        is_snell_installed && echo -e "  ${YELLOW}[2]${NC} ⚡ Переключить фаервол Snell v5"
         is_wdtt_installed && echo -e "  ${YELLOW}[3]${NC} 🛡️  Переключить фаервол WDTT / qwdtt"
-        if is_csqtt_installed; then
-            echo -e "  ${YELLOW}[4]${NC} 🔒 Переключить фаервол VPN-туннеля CSQTT"
-            echo -e "  ${YELLOW}[5]${NC} 🌐 Переключить защиту веб-панели CSQTT (SSH-туннель / Открыта)"
-        fi
         is_dns_installed && echo -e "  ${YELLOW}[6]${NC} 🌐 Переключить фаервол DNS-туннеля (WAN :53)"
         echo ""
         echo -e "  ${BOLD}--- Групповые действия ---${NC}"
@@ -749,19 +721,7 @@ menu_firewall() {
 
         case "$fw_act" in
             1) is_mieru_installed && toggle_mieru_fw ;;
-            2) is_snell_installed && toggle_snell_fw ;;
             3) is_wdtt_installed && toggle_wdtt_fw ;;
-            4) is_csqtt_installed && toggle_csqtt_tunnel_fw ;;
-            5)
-                if is_csqtt_installed; then
-                    if is_csqtt_web_protected; then
-                        csqtt_unprotect_web
-                    else
-                        csqtt_protect_web
-                    fi
-                    sleep 2
-                fi
-                ;;
             6) is_dns_installed && toggle_dns_wan ;;
             7) lock_all_protocols_fw ;;
             8) unlock_all_protocols_fw ;;
@@ -4047,66 +4007,7 @@ menu_fail2ban() {
 # ГЛАВНЫЙ РАЗДЕЛ: СИСТЕМНЫЕ НАСТРОЙКИ И ОПТИМИЗАЦИЯ
 # ------------------------------------------------------------------------------
 menu_system_opt() {
-    while true; do
-        {
-        clear
-        local cur_dns=$(get_sys_dns_short)
-        local cur_bbr=$(get_bbr_short_status)
-        local cur_swap=$(get_swap_short_status)
-        local cur_f2b=$(get_f2b_short_status)
-        local ram_h=$(free -h 2>/dev/null | awk '/^Mem:/{print $2}')
-        local cpus=$(nproc 2>/dev/null || echo "1")
-        local kern=$(uname -r)
-
-        echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║${BOLD}        СИСТЕМНЫЕ НАСТРОЙКИ, ОПТИМИЗАЦИЯ И БЕЗОПАСНОСТЬ        ${CYAN}║${NC}"
-        echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${CYAN}║${NC}  Сервер:    ${BOLD}${SERVER_IP}${NC}  |  CPU: ${BOLD}${cpus} ядра${NC}  |  RAM: ${BOLD}${ram_h}${NC}  |  Ядро: ${kern}"
-        echo -e "${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  • Системный DNS:  ${GREEN}${cur_dns}${NC}"
-        echo -e "${CYAN}║${NC}  • BBR & Буферы:   ${cur_bbr}"
-        echo -e "${CYAN}║${NC}  • Файл подкачки:  ${cur_swap}"
-        echo -e "${CYAN}║${NC}  • Fail2ban:       ${cur_f2b}"
-        echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        echo -e "  ${GREEN}${BOLD}[1]${NC} 🌐 ${BOLD}Смена системного DNS${NC} (Российские / Зарубежные DNS с пингом)"
-        echo -e "  ${BLUE}${BOLD}[2]${NC} 🚀 ${BOLD}Включить BBR и оптимизировать сетевые буферы${NC} (TCP тюнинг под RAM)"
-        echo -e "  ${PURPLE}${BOLD}[3]${NC} 💾 ${BOLD}Управление файлом подкачки SWAP${NC} (Выбор 2 ГБ / 4 ГБ, статус, удаление)"
-        echo -e "  ${RED}${BOLD}[4]${NC} 🛡️  ${BOLD}Управление Fail2ban${NC} (Установка, защита SSH, забаненные IP, unban)"
-        echo ""
-        echo -e "  ${YELLOW}${BOLD}[5]${NC} 📊 Сводный отчет о характеристиках сервера и сети"
-        echo -e "  ${BOLD}[0]${NC} 🚪 Назад в главное меню"
-        echo ""
-        } >/dev/null
-        xm_choose_action menu_system_opt sys_choice || return
-
-        case "$sys_choice" in
-            1) menu_dns_system ;;
-            2) menu_bbr_tuning ;;
-            3) menu_swap_manager ;;
-            4) menu_fail2ban ;;
-            5)
-                clear
-                echo -e "${BOLD}=== СВОДНЫЙ ОТЧЁТ О СИСТЕМЕ И СЕТИ ===${NC}"
-                echo ""
-                echo -e "${CYAN}--- Память и подкачка ---${NC}"
-                free -h
-                echo ""
-                echo -e "${CYAN}--- Дисковое пространство ---${NC}"
-                df -h /
-                echo ""
-                echo -e "${CYAN}--- Сетевые параметры ядра (sysctl) ---${NC}"
-                sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc net.ipv4.tcp_fastopen net.core.rmem_max net.core.wmem_max net.core.somaxconn vm.swappiness
-                echo ""
-                echo -e "${CYAN}--- Системный DNS (/etc/resolv.conf) ---${NC}"
-                cat /etc/resolv.conf | grep -E '^nameserver|^options'
-                echo ""
-                read -p "Нажмите Enter для возврата..."
-                ;;
-            0) return ;;
-            *) echo "Неверный выбор"; sleep 1 ;;
-        esac
-    done
+    xm_lite_network_menu
 }
 
 # ==============================================================================
@@ -5078,17 +4979,11 @@ print(json.dumps(data))
 main_hub() {
 
     local invoked=$(basename "$0")
-    if [ "$invoked" = "x-snell" ]; then
-        xm_snell_menu
-        exit 0
-    elif [ "$invoked" = "x-mieru" ]; then
+    if [ "$invoked" = "x-mieru" ]; then
         menu_mieru
         exit 0
     elif [ "$invoked" = "x-wdtt" ] || [ "$invoked" = "x-qwdtt" ]; then
         menu_wdtt
-        exit 0
-    elif [ "$invoked" = "x-csqtt" ]; then
-        menu_csqtt
         exit 0
     elif [ "$invoked" = "x-dns" ] || [ "$invoked" = "x-masterdns" ]; then
         menu_dns
