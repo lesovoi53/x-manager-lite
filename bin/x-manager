@@ -404,7 +404,13 @@ wdtt_change_profile_name() {
 }
 
 get_wdtt_routing() {
-    if iptables -t mangle -C PREROUTING -i wdtt0 -j WDTT_TPROXY 2>/dev/null; then
+    local mode="direct"
+    if [ -f /etc/wdtt/routing.mode ]; then
+        mode=$(tr -d '[:space:]' < /etc/wdtt/routing.mode 2>/dev/null)
+    elif iptables -t mangle -S PREROUTING 2>/dev/null | grep -q -- "-j WDTT_TPROXY"; then
+        mode="xray"
+    fi
+    if [ "$mode" = "xray" ]; then
         echo -e "${GREEN}Маршрутизация Xray${NC}"
     else
         echo -e "${YELLOW}Прямой выход${NC}"
@@ -1576,9 +1582,11 @@ wdtt_manage_routing() {
     read -p "Выберите режим [0-2]: " w_rt_choice
     case "$w_rt_choice" in
         1)
-            /usr/local/bin/wdtt-tproxy.sh
-            systemctl enable wdtt-tproxy 2>/dev/null || true
-            systemctl restart wdtt-tproxy 2>/dev/null || true
+            mkdir -p "$WDTT_DIR"
+            echo "xray" > "$WDTT_DIR/routing.mode"
+            sudo /usr/local/bin/wdtt-tproxy.sh 2>/dev/null || /usr/local/bin/wdtt-tproxy.sh 2>/dev/null || true
+            sudo systemctl enable wdtt-tproxy 2>/dev/null || true
+            sudo systemctl restart wdtt-tproxy 2>/dev/null || true
             while iptables -t nat -D POSTROUTING -s 10.66.0.0/16 -j MASQUERADE 2>/dev/null; do :; done
             while iptables -t nat -D POSTROUTING -s 10.66.0.0/16 -o "$WAN_IF" -j MASQUERADE 2>/dev/null; do :; done
             while iptables -t nat -D POSTROUTING -s 10.66.0.0/16 -o "$WAN_IF" -m comment --comment WDTT_MANAGED -j MASQUERADE 2>/dev/null; do :; done
@@ -1589,10 +1597,11 @@ wdtt_manage_routing() {
             sleep 2
             ;;
         2)
-            iptables -t mangle -D PREROUTING -i wdtt0 -j WDTT_TPROXY 2>/dev/null || true
-            iptables -t mangle -D PREROUTING -i wdttraw0 -j WDTT_TPROXY 2>/dev/null || true
-            systemctl stop wdtt-tproxy 2>/dev/null || true
-            systemctl disable wdtt-tproxy 2>/dev/null || true
+            mkdir -p "$WDTT_DIR"
+            echo "direct" > "$WDTT_DIR/routing.mode"
+            sudo /usr/local/bin/wdtt-tproxy.sh 2>/dev/null || /usr/local/bin/wdtt-tproxy.sh 2>/dev/null || true
+            sudo systemctl stop wdtt-tproxy 2>/dev/null || true
+            sudo systemctl disable wdtt-tproxy 2>/dev/null || true
             iptables -t nat -C POSTROUTING -s 10.66.0.0/16 -o "$WAN_IF" -m comment --comment WDTT_MANAGED -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.66.0.0/16 -o "$WAN_IF" -m comment --comment WDTT_MANAGED -j MASQUERADE
             iptables -t nat -C POSTROUTING -s 10.70.0.0/16 -o "$WAN_IF" -m comment --comment WDTT_RAW_MANAGED -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.70.0.0/16 -o "$WAN_IF" -m comment --comment WDTT_RAW_MANAGED -j MASQUERADE
             echo -e "${GREEN}✓ Маршрутизация WDTT: Прямой выход (NAT MASQUERADE)${NC}"

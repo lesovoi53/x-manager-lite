@@ -4,11 +4,13 @@
 # Режимы: xray (TPROXY в ядро Xray) | direct (Прямой выход через MASQUERADE)
 # ==============================================================================
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
 set -e
 if [ -f /usr/local/share/x-manager/scripts/firewall-common.sh ]; then
     . /usr/local/share/x-manager/scripts/firewall-common.sh
 fi
-iptables-save >/dev/null
+iptables-save >/dev/null 2>&1 || true
 
 WAN_IF=$(ip route show default 2>/dev/null | awk '{print $5}' | head -n 1)
 [ -z "$WAN_IF" ] && WAN_IF="eth0"
@@ -26,11 +28,19 @@ MODE="xray"
 
 SERVER_IP=$(ip -4 addr show scope global 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1)
 
+# Гарантируем наличие цепочки перед проверками правил, чтобы iptables -C не возвращал код 2
+iptables -w 5 -t mangle -N WDTT_TPROXY 2>/dev/null || true
+
 # Очистка предыдущих хуков
-while iptables -w 5 -t mangle -C PREROUTING -i wdtt0 -j WDTT_TPROXY 2>/dev/null; do iptables -w 5 -t mangle -D PREROUTING -i wdtt0 -j WDTT_TPROXY; done
-while iptables -w 5 -t mangle -C PREROUTING -i wdttraw0 -j WDTT_TPROXY 2>/dev/null; do iptables -w 5 -t mangle -D PREROUTING -i wdttraw0 -j WDTT_TPROXY; done
-    if iptables -w 5 -t mangle -S WDTT_TPROXY >/dev/null 2>&1; then iptables -w 5 -t mangle -F WDTT_TPROXY; fi
-    if iptables -w 5 -t mangle -S WDTT_TPROXY >/dev/null 2>&1; then iptables -w 5 -t mangle -X WDTT_TPROXY; fi
+while iptables -w 5 -t mangle -C PREROUTING -i wdtt0 -j WDTT_TPROXY 2>/dev/null; do
+    iptables -w 5 -t mangle -D PREROUTING -i wdtt0 -j WDTT_TPROXY 2>/dev/null || true
+done
+while iptables -w 5 -t mangle -C PREROUTING -i wdttraw0 -j WDTT_TPROXY 2>/dev/null; do
+    iptables -w 5 -t mangle -D PREROUTING -i wdttraw0 -j WDTT_TPROXY 2>/dev/null || true
+done
+if iptables -w 5 -t mangle -S WDTT_TPROXY >/dev/null 2>&1; then
+    iptables -w 5 -t mangle -F WDTT_TPROXY 2>/dev/null || true
+fi
 
 if [ "$MODE" = "xray" ]; then
     # 1. Routing table 100
@@ -38,8 +48,10 @@ if [ "$MODE" = "xray" ]; then
     ip route show table 100 | grep -q "local default dev lo" || ip route add local 0.0.0.0/0 dev lo table 100
 
     # 2. iptables MANGLE rules
-    iptables -w 5 -t mangle -N WDTT_TPROXY
-    if iptables -w 5 -t mangle -S WDTT_TPROXY >/dev/null 2>&1; then iptables -w 5 -t mangle -F WDTT_TPROXY; fi
+    iptables -w 5 -t mangle -N WDTT_TPROXY 2>/dev/null || true
+    if iptables -w 5 -t mangle -S WDTT_TPROXY >/dev/null 2>&1; then
+        iptables -w 5 -t mangle -F WDTT_TPROXY 2>/dev/null || true
+    fi
 
     # Исключения
     iptables -w 5 -t mangle -A WDTT_TPROXY -d 10.66.0.0/16 -j RETURN
@@ -68,8 +80,7 @@ if [ "$MODE" = "xray" ]; then
     while iptables -w 5 -t nat -D POSTROUTING -s 10.70.0.0/16 -o "${WAN_IF}" -m comment --comment WDTT_RAW_MANAGED -j MASQUERADE 2>/dev/null; do :; done
 else
     # Режим Direct WAN: Включаем прямой MASQUERADE
-    iptables -w 5 -t nat -C POSTROUTING -s 10.66.0.0/16 -o "${WAN_IF}" -m comment --comment WDTT_MANAGED -j MASQUERADE 2>/dev/null || \
-        iptables -w 5 -t nat -A POSTROUTING -s 10.66.0.0/16 -o "${WAN_IF}" -m comment --comment WDTT_MANAGED -j MASQUERADE
-    iptables -w 5 -t nat -C POSTROUTING -s 10.70.0.0/16 -o "${WAN_IF}" -m comment --comment WDTT_RAW_MANAGED -j MASQUERADE 2>/dev/null || \
-        iptables -w 5 -t nat -A POSTROUTING -s 10.70.0.0/16 -o "${WAN_IF}" -m comment --comment WDTT_RAW_MANAGED -j MASQUERADE
+    iptables -w 5 -t nat -C POSTROUTING -s 10.66.0.0/16 -o "${WAN_IF}" -m comment --comment WDTT_MANAGED -j MASQUERADE 2>/dev/null ||         iptables -w 5 -t nat -A POSTROUTING -s 10.66.0.0/16 -o "${WAN_IF}" -m comment --comment WDTT_MANAGED -j MASQUERADE
+    iptables -w 5 -t nat -C POSTROUTING -s 10.70.0.0/16 -o "${WAN_IF}" -m comment --comment WDTT_RAW_MANAGED -j MASQUERADE 2>/dev/null ||         iptables -w 5 -t nat -A POSTROUTING -s 10.70.0.0/16 -o "${WAN_IF}" -m comment --comment WDTT_RAW_MANAGED -j MASQUERADE
 fi
+
