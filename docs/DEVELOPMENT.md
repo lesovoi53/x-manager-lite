@@ -14,15 +14,11 @@ Lite получен из X-Manager `d97a3c50f51f729838376801d4e8fb9bb5edbea4`.
 | Фиксированные компоненты собственного Release | `components.json`, `scripts/release-assets.py` |
 | Резервирование, SQLite WAL, firewall, runtime sysctl, rollback | `scripts/installer-state.py`, `xm_begin/xm_exit/xm_finish` |
 | Русская навигация | `bin/x-manager`, `scripts/menu-lite.sh`, `menu-v2.sh`, `menu-actions.tsv` |
-| Одна активная реализация Snell | `snell-switch.py`, `snell6-endpoints.py`, `service-control.py` |
-| Сохранение/синхронизация URI | `snell-subscriptions.py`, `mieru-subscriptions.py`, TUNA API |
+| Управление qWDTT и Mieru | `service-control.py`, `mieru-subscriptions.py` |
+| Сохранение/синхронизация URI | `tuna-sub-server/tuna-subscriptions.py`, TUNA API |
 | MasterDNS с сохранением локального resolver | `install-masterdns.sh`, `extract-masterdns.py` |
 | Шлюзы независимого Xray или совместимой X-UI | `xray-discovery.py`, `xray_gateways.py`, `detect-gateways.py`, `plan-ports.py` |
-| Ограниченный crash-restart / автосброс | `tuna-watchdog.py`, `tuna-recovery.py`, systemd timer |
-| Локальные health-пробы | `watchdog-health.py`, `tuna-healthcheck.timer` |
-| Адаптивная сеть / отдельные TCP-настройки | `network-profile.py`, `tcp-profile.py` |
-| Запланированная перезагрузка | `reboot-schedule.py` |
-| Общая матрица ОС установщика и Snell v6 | `supported-platform.py`; helper обязательно копируется установщиком |
+| Адаптивная сеть / BBR / DNS | `network-profile.py` |
 | Постоянные INPUT-правила при активном UFW | `firewall-adapter.py`, `firewall-common.sh`; маркированные блоки before.rules/before6.rules |
 
 UFW-адаптер не подменяет системный бинарник iptables: его вызывают только
